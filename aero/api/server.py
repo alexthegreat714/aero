@@ -66,6 +66,7 @@ def _register_routes(app: FastAPI) -> None:
         agent_routes,
         experiment_routes,
         data_routes,
+        surrogate_routes,
     )
 
     # Include route modules
@@ -76,6 +77,7 @@ def _register_routes(app: FastAPI) -> None:
     app.include_router(agent_routes.router, prefix="/api/agent", tags=["Agent"])
     app.include_router(experiment_routes.router, prefix="/api/experiments", tags=["Experiments"])
     app.include_router(data_routes.router, prefix="/api/data", tags=["Data"])
+    app.include_router(surrogate_routes.router, prefix="/api/surrogate", tags=["Surrogate"])
 
     # Root endpoint
     @app.get("/", tags=["Health"])

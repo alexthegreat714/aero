@@ -426,7 +426,134 @@ class ScientificReasoningLoop:
         self._current_hypotheses: List = []
         self._iteration_history: List[dict] = []
 
+        # Surrogate model support
+        self._surrogate_registry = None
+        app_config = get_config()
+        self._use_surrogates = app_config.get("reasoning.use_surrogates", True)
+        self._init_surrogates()
+
         logger.info("ScientificReasoningLoop initialized")
+
+    def _init_surrogates(self) -> None:
+        """Initialize surrogate model support if available."""
+        if not self._use_surrogates:
+            return
+
+        try:
+            from aero.surrogate import get_default_registry, TORCH_AVAILABLE
+            if TORCH_AVAILABLE:
+                self._surrogate_registry = get_default_registry()
+                logger.debug(
+                    f"Surrogate support enabled: {len(self._surrogate_registry)} models"
+                )
+        except Exception as e:
+            logger.debug(f"Surrogate support not available: {e}")
+            self._surrogate_registry = None
+
+    def maybe_use_surrogate(self, hypothesis, planned_simulation) -> Optional[dict]:
+        """
+        Decide whether to use a surrogate model instead of full simulation.
+
+        Args:
+            hypothesis: The hypothesis being tested
+            planned_simulation: The planned simulation configuration
+
+        Returns:
+            Surrogate result dict if used, None if should run full simulation
+        """
+        if not self._use_surrogates or self._surrogate_registry is None:
+            return None
+
+        try:
+            # Get simulation type
+            sim_type = planned_simulation.sim_type
+            if hasattr(sim_type, 'value'):
+                sim_type = sim_type.value
+
+            # Check if we have a surrogate for this type
+            surrogates = self._surrogate_registry.get_models_for_sim_type(sim_type)
+            if not surrogates:
+                return None
+
+            # Use the most recent surrogate
+            surrogate_info = surrogates[-1]
+            logger.info(f"Using surrogate '{surrogate_info.name}' for {sim_type}")
+
+            # Load and run surrogate
+            result = self._run_surrogate(surrogate_info, planned_simulation)
+            if result is not None:
+                result["source"] = "surrogate"
+                result["surrogate_name"] = surrogate_info.name
+                return result
+
+        except Exception as e:
+            logger.warning(f"Surrogate evaluation failed: {e}")
+
+        return None
+
+    def _run_surrogate(self, surrogate_info, sim_config) -> Optional[dict]:
+        """Run a surrogate model prediction."""
+        try:
+            import torch
+            from pathlib import Path
+            from aero.surrogate.models import create_model
+            from aero.surrogate.evaluator import predict_batch
+
+            # Load model
+            model_path = Path(surrogate_info.path)
+            if not model_path.exists():
+                return None
+
+            checkpoint = torch.load(model_path, map_location="cpu")
+
+            model = create_model(
+                model_type=checkpoint["model_type"],
+                input_dim=checkpoint["input_dim"],
+                output_dim=checkpoint["output_dim"],
+                hidden_dims=checkpoint["hidden_dims"],
+            )
+            model.load_state_dict(checkpoint["model_state_dict"])
+            model.eval()
+
+            normalization = checkpoint.get("normalization")
+
+            # Generate evaluation points
+            nx = sim_config.grid_size
+            if checkpoint["input_dim"] == 1:
+                # 1D: x coordinates
+                x = np.linspace(0, 1, nx).reshape(-1, 1)
+                inputs = x
+            elif checkpoint["input_dim"] == 2:
+                # 2D: (x, y) or (x, t) grid
+                ny = sim_config.grid_size_y or nx
+                x = np.linspace(0, 1, nx)
+                y = np.linspace(0, 1, ny)
+                xx, yy = np.meshgrid(x, y, indexing='ij')
+                inputs = np.stack([xx.flatten(), yy.flatten()], axis=1)
+            else:
+                return None
+
+            # Predict
+            predictions = predict_batch(model, inputs, device="cpu", normalization=normalization)
+
+            # Reshape output
+            if checkpoint["input_dim"] == 1:
+                solution = predictions.flatten().tolist()
+            else:
+                solution = predictions.reshape(nx, -1).tolist()
+
+            return {
+                "solution": solution,
+                "converged": True,
+                "metadata": {
+                    "solver": "surrogate",
+                    "surrogate_name": surrogate_info.name,
+                },
+            }
+
+        except Exception as e:
+            logger.warning(f"Error running surrogate: {e}")
+            return None
 
     def step(self, input_query: str) -> dict:
         """

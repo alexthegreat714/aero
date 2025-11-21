@@ -306,3 +306,166 @@ def search_metadata(
     rows = cursor.fetchall()
 
     return [store._row_to_dict(row) for row in rows]
+
+
+# -----------------------------------------------------------------------------
+# Helper functions for Surrogate Model training
+# -----------------------------------------------------------------------------
+
+
+def get_simulation_records_for_type(
+    store: DataStore,
+    sim_type: str,
+    limit: int = 50,
+) -> List[Dict[str, Any]]:
+    """
+    Get simulation records suitable for surrogate training.
+
+    Returns records with their associated fields metadata for
+    loading field data.
+
+    Args:
+        store: DataStore instance
+        sim_type: Simulation type (e.g., "heat_1d", "laplace_2d")
+        limit: Maximum number of records
+
+    Returns:
+        List of simulation records with field metadata
+    """
+    # Get simulations of the specified type
+    records = find_simulations_by_type(store, sim_type, limit=limit)
+
+    # Enrich with fields metadata
+    for record in records:
+        try:
+            fields_meta = store.list_fields(record["id"], "simulation")
+            record["fields_meta"] = fields_meta
+        except Exception:
+            record["fields_meta"] = []
+
+    return records
+
+
+def get_timeseries_for_tag(
+    store: DataStore,
+    tag: str,
+    limit: int = 50,
+) -> List[Dict[str, Any]]:
+    """
+    Get timeseries records that belong to simulations/experiments with a tag.
+
+    Args:
+        store: DataStore instance
+        tag: Tag to filter by
+        limit: Maximum number of records
+
+    Returns:
+        List of timeseries records
+    """
+    # Find simulations with the tag
+    tagged_sims = find_simulations_by_tag(store, tag, limit=limit)
+
+    all_timeseries = []
+    for sim in tagged_sims:
+        ts_list = store.list_timeseries(sim["id"], "simulation")
+        all_timeseries.extend(ts_list)
+        if len(all_timeseries) >= limit:
+            break
+
+    return all_timeseries[:limit]
+
+
+def get_simulation_field_data(
+    store: DataStore,
+    sim_id: str,
+    field_name: str = "solution",
+) -> Optional[Any]:
+    """
+    Get field data from a simulation.
+
+    Args:
+        store: DataStore instance
+        sim_id: Simulation ID
+        field_name: Name of the field to retrieve
+
+    Returns:
+        Field data (numpy array) or None if not found
+    """
+    # First check field table
+    fields = store.list_fields(sim_id, "simulation")
+    for field in fields:
+        if field.get("name") == field_name:
+            return store.load_field_array(field["id"])
+
+    # Fallback: check if stored in simulation record
+    sim = store.get_simulation(sim_id)
+    if sim and "fields" in sim:
+        fields_data = sim["fields"]
+        if isinstance(fields_data, str):
+            try:
+                fields_data = json.loads(fields_data)
+            except json.JSONDecodeError:
+                return None
+
+        if field_name in fields_data:
+            import numpy as np
+            data = fields_data[field_name]
+            if isinstance(data, list):
+                return np.array(data)
+            return data
+
+    return None
+
+
+def count_simulations_by_type(
+    store: DataStore,
+) -> Dict[str, int]:
+    """
+    Count simulations grouped by type.
+
+    Args:
+        store: DataStore instance
+
+    Returns:
+        Dictionary mapping type -> count
+    """
+    conn = store._get_connection()
+    counts = {}
+
+    try:
+        cursor = conn.execute(
+            "SELECT type, COUNT(*) as cnt FROM simulations GROUP BY type"
+        )
+        for row in cursor.fetchall():
+            counts[row[0]] = row[1]
+    except Exception:
+        pass
+
+    return counts
+
+
+def count_experiments_by_type(
+    store: DataStore,
+) -> Dict[str, int]:
+    """
+    Count experiments grouped by type.
+
+    Args:
+        store: DataStore instance
+
+    Returns:
+        Dictionary mapping type -> count
+    """
+    conn = store._get_connection()
+    counts = {}
+
+    try:
+        cursor = conn.execute(
+            "SELECT type, COUNT(*) as cnt FROM experiments GROUP BY type"
+        )
+        for row in cursor.fetchall():
+            counts[row[0]] = row[1]
+    except Exception:
+        pass
+
+    return counts

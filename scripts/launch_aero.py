@@ -498,6 +498,61 @@ def initialize_data_store() -> dict:
     return result
 
 
+def initialize_surrogates() -> dict:
+    """Initialize the surrogate modeling system and return status."""
+    print("\n[Initializing Surrogate Models]")
+
+    result = {
+        "models_dir": None,
+        "num_models": 0,
+        "torch_available": False,
+        "status": "not_initialized",
+    }
+
+    try:
+        from aero.surrogate import (
+            SurrogateRegistry,
+            set_default_registry,
+            TORCH_AVAILABLE,
+        )
+
+        # Get config
+        from aero.config.loader import get_config
+        config = get_config()
+
+        models_dir = config.get("surrogates.models_dir", "./data/models")
+
+        # Create models directory if needed
+        from pathlib import Path
+        Path(models_dir).mkdir(parents=True, exist_ok=True)
+
+        # Initialize registry
+        registry = SurrogateRegistry(models_dir)
+        set_default_registry(registry)
+
+        result["models_dir"] = models_dir
+        result["num_models"] = len(registry)
+        result["torch_available"] = TORCH_AVAILABLE
+        result["status"] = "ready"
+
+        print(f"  PyTorch available:   {'Yes' if TORCH_AVAILABLE else 'No'}")
+        print(f"  Models directory:    {models_dir}")
+        print(f"  Registered models:   {len(registry)}")
+
+        if len(registry) > 0:
+            models = registry.list_models()
+            for model in models[:5]:  # Show first 5
+                print(f"    - {model.name} ({model.model_type})")
+            if len(models) > 5:
+                print(f"    ... and {len(models) - 5} more")
+
+    except Exception as e:
+        print(f"  Error initializing surrogates: {e}")
+        result["status"] = f"error: {e}"
+
+    return result
+
+
 def load_configuration() -> None:
     """Load configuration."""
     print("\n[Loading Configuration]")
@@ -581,6 +636,7 @@ def main():
     initialize_rag()
     initialize_experiments()
     initialize_data_store()
+    initialize_surrogates()
 
     # Start server
     start_server(args.host, args.port)

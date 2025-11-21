@@ -179,6 +179,7 @@ reasoning:
   pattern_convergence_eps: 1.0e-3
   max_simulations_per_iteration: 3
   timeout_per_simulation: 60.0
+  use_surrogates: true  # Enable surrogate model usage when available
 
   # Hypothesis generation
   hypothesis:
@@ -230,3 +231,23 @@ data:
   # Cleanup settings
   max_records_per_type: 1000  # Max records before cleanup warning
   cleanup_after_days: 90     # Auto-cleanup records older than this
+
+# Surrogate Model configuration
+surrogates:
+  # Directory for storing trained models
+  models_dir: "./data/models"
+
+  # Default training parameters
+  default_hidden_dims: [64, 64]
+  default_epochs: 100
+  default_batch_size: 64
+  default_lr: 0.001
+
+  # Data limits
+  max_training_records: 50
+  samples_per_simulation: 1000
+
+  # Model types
+  supported_types:
+    - mlp
+    - pinn
