@@ -29,9 +29,16 @@ class ExperimentType(str, Enum):
     """Types of experiments available."""
 
     WEBCAM_CAPTURE = "webcam_capture"
+    CAMERA_SNAPSHOT = "camera_snapshot"
+    CAMERA_FLOW_SEQUENCE = "camera_flow_sequence"
+    VIDEO_FILE_ANALYSIS = "video_file_analysis"
+    IMAGE_SEQUENCE_ANALYSIS = "image_sequence_analysis"
     OCR_EXTRACTION = "ocr_extraction"
     FILE_ANALYSIS = "file_analysis"
+    SENSOR_TIMESERIES = "sensor_timeseries"
     SENSOR_READ = "sensor_read"
+    SYNTHETIC_FLOW = "synthetic_flow"
+    SYNTHETIC_TIMESERIES = "synthetic_timeseries"
 
 
 @dataclass
@@ -577,3 +584,340 @@ def estimate_runtime(config: SimulationJobConfig) -> float:
         return config.max_iterations * 0.01  # ~10ms per epoch
 
     return 1.0  # Default estimate
+
+
+# =============================================================================
+# Experiment Execution
+# =============================================================================
+
+
+def execute_experiment(config: ExperimentConfig) -> "ExperimentResult":
+    """
+    Execute an experiment and return results.
+
+    Args:
+        config: Experiment configuration
+
+    Returns:
+        ExperimentResult with experiment data
+    """
+    # Import here to avoid circular imports
+    from aero.experiments import ExperimentResult
+
+    logger.info(f"Executing experiment: {config.exp_type.value}")
+
+    try:
+        if config.exp_type == ExperimentType.CAMERA_SNAPSHOT:
+            return _run_camera_snapshot(config)
+
+        elif config.exp_type == ExperimentType.CAMERA_FLOW_SEQUENCE:
+            return _run_camera_flow_sequence(config)
+
+        elif config.exp_type == ExperimentType.VIDEO_FILE_ANALYSIS:
+            return _run_video_analysis(config)
+
+        elif config.exp_type == ExperimentType.SENSOR_TIMESERIES:
+            return _run_sensor_timeseries(config)
+
+        elif config.exp_type == ExperimentType.SYNTHETIC_FLOW:
+            return _run_synthetic_flow(config)
+
+        elif config.exp_type == ExperimentType.SYNTHETIC_TIMESERIES:
+            return _run_synthetic_timeseries(config)
+
+        elif config.exp_type in [ExperimentType.WEBCAM_CAPTURE]:
+            return _run_camera_snapshot(config)
+
+        else:
+            return ExperimentResult.failure(
+                config.exp_type.value,
+                f"Unsupported experiment type: {config.exp_type.value}",
+            )
+
+    except Exception as e:
+        logger.exception(f"Experiment execution failed: {e}")
+        return ExperimentResult.failure(config.exp_type.value, str(e))
+
+
+def _run_camera_snapshot(config: ExperimentConfig) -> "ExperimentResult":
+    """Execute camera snapshot experiment."""
+    from aero.experiments import ExperimentResult, capture_frame, analyze_frame, is_webcam_available
+
+    camera_index = int(config.source) if config.source else 0
+    params = config.parameters
+
+    if not is_webcam_available(camera_index):
+        return ExperimentResult.failure(
+            "camera_snapshot",
+            f"Webcam not available at index {camera_index}",
+        )
+
+    capture = capture_frame(
+        index=camera_index,
+        width=params.get("width", 640),
+        height=params.get("height", 480),
+    )
+
+    if capture is None:
+        return ExperimentResult.failure("camera_snapshot", "Failed to capture frame")
+
+    # Analyze the frame
+    analysis = analyze_frame(capture.image)
+
+    return ExperimentResult(
+        experiment_type="camera_snapshot",
+        data={
+            "shape": capture.shape,
+            "analysis": analysis,
+        },
+        metadata={
+            "camera_index": camera_index,
+            "frame_number": capture.frame_number,
+            "hypothesis_id": config.hypothesis_id,
+        },
+    )
+
+
+def _run_camera_flow_sequence(config: ExperimentConfig) -> "ExperimentResult":
+    """Execute camera optical flow sequence experiment."""
+    from aero.experiments import (
+        ExperimentResult,
+        capture_sequence,
+        compute_optical_flow,
+        is_webcam_available,
+    )
+
+    camera_index = int(config.source) if config.source else 0
+    params = config.parameters
+
+    if not is_webcam_available(camera_index):
+        return ExperimentResult.failure(
+            "camera_flow_sequence",
+            f"Webcam not available at index {camera_index}",
+        )
+
+    num_frames = params.get("num_frames", 10)
+    interval_ms = params.get("interval_ms", 100)
+
+    captures = capture_sequence(
+        count=num_frames,
+        index=camera_index,
+        width=params.get("width", 640),
+        height=params.get("height", 480),
+        interval_ms=interval_ms,
+    )
+
+    if len(captures) < 2:
+        return ExperimentResult.failure(
+            "camera_flow_sequence",
+            "Not enough frames captured for flow analysis",
+        )
+
+    # Compute optical flow between consecutive frames
+    flow_results = []
+    for i in range(1, len(captures)):
+        flow = compute_optical_flow(captures[i - 1].image, captures[i].image)
+        if flow:
+            flow_results.append({
+                "frame_pair": [i - 1, i],
+                "mean_magnitude": flow["magnitude"]["mean"],
+                "max_magnitude": flow["magnitude"]["max"],
+                "motion_detected": flow["motion_detected"],
+            })
+
+    return ExperimentResult(
+        experiment_type="camera_flow_sequence",
+        data={
+            "num_frames": len(captures),
+            "flow_results": flow_results,
+        },
+        metadata={
+            "camera_index": camera_index,
+            "interval_ms": interval_ms,
+            "hypothesis_id": config.hypothesis_id,
+        },
+    )
+
+
+def _run_video_analysis(config: ExperimentConfig) -> "ExperimentResult":
+    """Execute video file analysis experiment."""
+    from aero.experiments import ExperimentResult
+    from aero.experiments.camera import load_video_frames
+    from aero.experiments.analyzer import analyze_frame, compute_frame_difference_stats
+
+    video_path = config.source
+    params = config.parameters
+
+    if not video_path:
+        return ExperimentResult.failure("video_file_analysis", "No video path specified")
+
+    frames = load_video_frames(
+        video_path,
+        max_frames=params.get("max_frames", 100),
+        skip_frames=params.get("skip_frames", 0),
+    )
+
+    if not frames:
+        return ExperimentResult.failure(
+            "video_file_analysis",
+            f"Failed to load video: {video_path}",
+        )
+
+    # Analyze frames
+    frame_analyses = [analyze_frame(f.image) for f in frames[:10]]  # First 10 frames
+    diff_stats = compute_frame_difference_stats([f.image for f in frames])
+
+    return ExperimentResult(
+        experiment_type="video_file_analysis",
+        data={
+            "num_frames": len(frames),
+            "frame_analyses": frame_analyses,
+            "motion_statistics": diff_stats,
+        },
+        metadata={
+            "source": video_path,
+            "hypothesis_id": config.hypothesis_id,
+        },
+    )
+
+
+def _run_sensor_timeseries(config: ExperimentConfig) -> "ExperimentResult":
+    """Execute sensor time series experiment."""
+    from aero.experiments import ExperimentResult, read_csv_timeseries, read_json_timeseries
+    import numpy as np
+
+    file_path = config.source
+    params = config.parameters
+
+    if not file_path:
+        return ExperimentResult.failure("sensor_timeseries", "No file path specified")
+
+    # Determine file type and read
+    if file_path.endswith(".csv"):
+        values, timestamps = read_csv_timeseries(
+            file_path,
+            value_column=params.get("value_column"),
+            time_column=params.get("time_column"),
+        )
+    elif file_path.endswith(".json"):
+        values, timestamps = read_json_timeseries(
+            file_path,
+            value_key=params.get("value_key"),
+            time_key=params.get("time_key"),
+        )
+    else:
+        return ExperimentResult.failure(
+            "sensor_timeseries",
+            f"Unsupported file format: {file_path}",
+        )
+
+    if not values:
+        return ExperimentResult.failure("sensor_timeseries", "No data read from file")
+
+    values_array = np.array(values)
+
+    return ExperimentResult(
+        experiment_type="sensor_timeseries",
+        data={
+            "values": values_array,
+            "length": len(values),
+            "statistics": {
+                "mean": float(np.mean(values_array)),
+                "std": float(np.std(values_array)),
+                "min": float(np.min(values_array)),
+                "max": float(np.max(values_array)),
+            },
+        },
+        metadata={
+            "source": file_path,
+            "hypothesis_id": config.hypothesis_id,
+        },
+    )
+
+
+def _run_synthetic_flow(config: ExperimentConfig) -> "ExperimentResult":
+    """Execute synthetic flow experiment."""
+    from aero.experiments import ExperimentResult
+    from aero.experiments.synthetic import generate_synthetic_flow
+
+    params = config.parameters
+
+    flow_data = generate_synthetic_flow(
+        width=params.get("width", 64),
+        height=params.get("height", 64),
+        flow_type=params.get("flow_type", "uniform"),
+        magnitude=params.get("magnitude", 5.0),
+        seed=params.get("seed"),
+    )
+
+    return ExperimentResult(
+        experiment_type="synthetic_flow",
+        data={
+            "mean_magnitude": flow_data["mean_magnitude"],
+            "max_magnitude": flow_data["max_magnitude"],
+            "flow_type": flow_data["flow_type"],
+            "shape": flow_data["shape"],
+        },
+        metadata={
+            "hypothesis_id": config.hypothesis_id,
+            "synthetic": True,
+        },
+    )
+
+
+def _run_synthetic_timeseries(config: ExperimentConfig) -> "ExperimentResult":
+    """Execute synthetic timeseries experiment."""
+    from aero.experiments import ExperimentResult
+    from aero.experiments.synthetic import generate_synthetic_timeseries
+
+    params = config.parameters
+
+    ts_data = generate_synthetic_timeseries(
+        length=params.get("length", 100),
+        pattern=params.get("pattern", "sine"),
+        noise_level=params.get("noise_level", 0.1),
+        frequency=params.get("frequency", 1.0),
+        amplitude=params.get("amplitude", 1.0),
+        offset=params.get("offset", 0.0),
+        seed=params.get("seed"),
+    )
+
+    return ExperimentResult(
+        experiment_type="synthetic_timeseries",
+        data={
+            "values": ts_data["values"],
+            "pattern": ts_data["pattern"],
+            "length": ts_data["length"],
+            "statistics": ts_data["statistics"],
+        },
+        metadata={
+            "hypothesis_id": config.hypothesis_id,
+            "synthetic": True,
+        },
+    )
+
+
+def create_experiment_config(
+    exp_type: ExperimentType,
+    hypothesis_id: str = "",
+    source: str = "",
+    **params,
+) -> ExperimentConfig:
+    """
+    Create an experiment configuration with the given parameters.
+
+    Args:
+        exp_type: Type of experiment
+        hypothesis_id: Associated hypothesis ID
+        source: Source path (file, camera index, etc.)
+        **params: Additional parameters
+
+    Returns:
+        ExperimentConfig object
+    """
+    return ExperimentConfig(
+        exp_type=exp_type,
+        hypothesis_id=hypothesis_id,
+        source=source,
+        parameters=params,
+    )

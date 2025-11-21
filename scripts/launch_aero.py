@@ -387,6 +387,68 @@ def initialize_simulation() -> dict:
     return result
 
 
+def check_experiments() -> dict:
+    """Check experiment system capabilities."""
+    result = {
+        "opencv": False,
+        "webcam": False,
+        "synthetic": True,  # Always available
+        "sensor_file": True,  # Always available
+    }
+
+    # Check OpenCV
+    try:
+        import cv2
+        result["opencv"] = True
+        result["opencv_version"] = cv2.__version__
+    except ImportError:
+        result["opencv_error"] = "OpenCV not installed"
+
+    # Check webcam availability (if OpenCV available)
+    if result["opencv"]:
+        try:
+            from aero.experiments import is_webcam_available, list_cameras
+            result["webcam"] = is_webcam_available(0)
+            available_cameras = list_cameras(max_index=5)
+            result["available_cameras"] = available_cameras
+        except ImportError:
+            result["webcam_error"] = "Experiments module not available"
+        except Exception as e:
+            result["webcam_error"] = str(e)
+
+    return result
+
+
+def initialize_experiments() -> dict:
+    """Initialize experiment system and return status."""
+    print("\n[Initializing Experiment System]")
+
+    result = check_experiments()
+
+    # Print results
+    print(f"  OpenCV:              {'Yes (v' + result.get('opencv_version', '?') + ')' if result['opencv'] else 'No'}")
+    if not result["opencv"]:
+        print(f"    Note: Install opencv-python for camera/video features")
+
+    print(f"  Webcam:              {'Yes' if result['webcam'] else 'No'}")
+    if result.get("available_cameras"):
+        print(f"    Available indices: {result['available_cameras']}")
+
+    print(f"  Synthetic experiments: Yes (always available)")
+    print(f"  File-based sensors:    Yes (CSV, JSON, TXT)")
+
+    # Check for experiment data directory
+    from pathlib import Path
+    data_dir = Path("./data/experiments")
+    if not data_dir.exists():
+        print(f"  Data directory:      Creating ./data/experiments")
+        data_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        print(f"  Data directory:      ./data/experiments")
+
+    return result
+
+
 def load_configuration() -> None:
     """Load configuration."""
     print("\n[Loading Configuration]")
@@ -468,6 +530,7 @@ def main():
     initialize_registries()
     initialize_simulation()
     initialize_rag()
+    initialize_experiments()
 
     # Start server
     start_server(args.host, args.port)

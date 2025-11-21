@@ -267,3 +267,215 @@ def list_cameras(max_index: int = 10) -> list[int]:
             available.append(i)
 
     return available
+
+
+# =============================================================================
+# Module-level convenience functions
+# =============================================================================
+
+
+def is_webcam_available(index: int = 0) -> bool:
+    """
+    Check if a webcam is available.
+
+    Alias for is_camera_available for semantic clarity.
+
+    Args:
+        index: Camera device index
+
+    Returns:
+        True if webcam is available
+    """
+    return is_camera_available(index)
+
+
+def capture_frame(
+    index: int = 0,
+    width: int = 640,
+    height: int = 480,
+) -> Optional[CameraCapture]:
+    """
+    Capture a single frame from webcam (convenience function).
+
+    Opens camera, captures one frame, closes camera.
+    For multiple captures, use the Camera class directly.
+
+    Args:
+        index: Camera device index
+        width: Capture width
+        height: Capture height
+
+    Returns:
+        CameraCapture or None if failed
+    """
+    if not CV2_AVAILABLE:
+        logger.warning("OpenCV not available - cannot capture frame")
+        return None
+
+    camera = Camera(index=index, width=width, height=height)
+
+    if not camera.open():
+        logger.warning(f"Could not open camera at index {index}")
+        return None
+
+    try:
+        capture = camera.capture()
+        return capture
+    finally:
+        camera.close()
+
+
+def capture_sequence(
+    count: int,
+    index: int = 0,
+    width: int = 640,
+    height: int = 480,
+    interval_ms: int = 100,
+) -> list[CameraCapture]:
+    """
+    Capture a sequence of frames from webcam (convenience function).
+
+    Opens camera, captures frames, closes camera.
+
+    Args:
+        count: Number of frames to capture
+        index: Camera device index
+        width: Capture width
+        height: Capture height
+        interval_ms: Delay between frames in milliseconds
+
+    Returns:
+        List of CameraCapture objects (may be empty if camera unavailable)
+    """
+    if not CV2_AVAILABLE:
+        logger.warning("OpenCV not available - cannot capture sequence")
+        return []
+
+    camera = Camera(index=index, width=width, height=height)
+
+    if not camera.open():
+        logger.warning(f"Could not open camera at index {index}")
+        return []
+
+    try:
+        captures = camera.capture_sequence(count, interval_ms)
+        return captures
+    finally:
+        camera.close()
+
+
+def load_video_frames(
+    video_path: str,
+    max_frames: Optional[int] = None,
+    skip_frames: int = 0,
+) -> list[CameraCapture]:
+    """
+    Load frames from a video file.
+
+    Args:
+        video_path: Path to video file
+        max_frames: Maximum number of frames to load (None = all)
+        skip_frames: Number of frames to skip between captures
+
+    Returns:
+        List of CameraCapture objects
+    """
+    if not CV2_AVAILABLE:
+        logger.warning("OpenCV not available - cannot load video")
+        return []
+
+    captures = []
+    frame_count = 0
+
+    try:
+        cap = cv2.VideoCapture(video_path)
+
+        if not cap.isOpened():
+            logger.error(f"Could not open video: {video_path}")
+            return []
+
+        frame_number = 0
+        skip_counter = 0
+
+        while True:
+            ret, frame = cap.read()
+
+            if not ret:
+                break
+
+            if skip_counter > 0:
+                skip_counter -= 1
+                continue
+
+            frame_count += 1
+
+            capture = CameraCapture(
+                image=frame,
+                timestamp=datetime.now(),
+                frame_number=frame_number,
+                metadata={
+                    "source": video_path,
+                    "width": frame.shape[1],
+                    "height": frame.shape[0],
+                },
+            )
+            captures.append(capture)
+            frame_number += 1
+
+            if max_frames and len(captures) >= max_frames:
+                break
+
+            skip_counter = skip_frames
+
+        cap.release()
+        logger.info(f"Loaded {len(captures)} frames from {video_path}")
+
+    except Exception as e:
+        logger.error(f"Error loading video: {e}")
+
+    return captures
+
+
+def load_image_sequence(
+    image_paths: list[str],
+) -> list[CameraCapture]:
+    """
+    Load a sequence of image files.
+
+    Args:
+        image_paths: List of image file paths
+
+    Returns:
+        List of CameraCapture objects
+    """
+    if not CV2_AVAILABLE:
+        logger.warning("OpenCV not available - cannot load images")
+        return []
+
+    captures = []
+
+    for i, path in enumerate(image_paths):
+        try:
+            image = cv2.imread(path)
+
+            if image is None:
+                logger.warning(f"Could not load image: {path}")
+                continue
+
+            capture = CameraCapture(
+                image=image,
+                timestamp=datetime.now(),
+                frame_number=i,
+                metadata={
+                    "source": path,
+                    "width": image.shape[1],
+                    "height": image.shape[0],
+                },
+            )
+            captures.append(capture)
+
+        except Exception as e:
+            logger.error(f"Error loading image {path}: {e}")
+
+    logger.info(f"Loaded {len(captures)} images")
+    return captures

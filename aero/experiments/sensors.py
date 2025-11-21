@@ -324,3 +324,404 @@ class SensorReader:
         """List of registered sensor IDs."""
         with self._lock:
             return list(self._sensors.keys())
+
+
+# =============================================================================
+# File-based Sensors
+# =============================================================================
+
+
+class FileSensor(BaseSensor):
+    """
+    Sensor that reads from a file (CSV, JSON, or text).
+
+    Simulates real-time sensor by reading values sequentially.
+    Useful for replaying recorded sensor data.
+    """
+
+    def __init__(
+        self,
+        sensor_id: str,
+        file_path: str,
+        unit: str = "units",
+        column: Optional[str] = None,
+        loop: bool = True,
+    ):
+        """
+        Initialize the file sensor.
+
+        Args:
+            sensor_id: Sensor identifier
+            file_path: Path to data file
+            unit: Measurement unit
+            column: Column name for CSV/JSON (None = first data column)
+            loop: Loop back to start when reaching end
+        """
+        super().__init__(sensor_id)
+        self.file_path = file_path
+        self._unit = unit
+        self.column = column
+        self.loop = loop
+
+        self._data: list[float] = []
+        self._timestamps: list[datetime] = []
+        self._index: int = 0
+
+    @property
+    def unit(self) -> str:
+        return self._unit
+
+    def connect(self) -> bool:
+        """Load data from file."""
+        try:
+            self._load_data()
+            self._is_connected = True
+            logger.info(f"FileSensor '{self.sensor_id}' loaded {len(self._data)} values from {self.file_path}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to load file sensor data: {e}")
+            return False
+
+    def disconnect(self) -> None:
+        """Clear data and disconnect."""
+        self._data = []
+        self._timestamps = []
+        self._index = 0
+        self._is_connected = False
+        logger.info(f"FileSensor '{self.sensor_id}' disconnected")
+
+    def read(self) -> SensorData:
+        """Read next value from file data."""
+        if not self._data:
+            return SensorData(
+                sensor_id=self.sensor_id,
+                value=0.0,
+                unit=self._unit,
+                metadata={"error": "no_data"},
+            )
+
+        value = self._data[self._index]
+        timestamp = self._timestamps[self._index] if self._timestamps else datetime.now()
+
+        self._index += 1
+
+        if self._index >= len(self._data):
+            if self.loop:
+                self._index = 0
+            else:
+                self._index = len(self._data) - 1
+
+        return SensorData(
+            sensor_id=self.sensor_id,
+            value=value,
+            timestamp=timestamp,
+            unit=self._unit,
+            metadata={
+                "source": self.file_path,
+                "index": self._index,
+                "total": len(self._data),
+            },
+        )
+
+    def _load_data(self) -> None:
+        """Load data from file based on extension."""
+        import csv
+        import json
+        from pathlib import Path
+
+        path = Path(self.file_path)
+
+        if path.suffix.lower() == ".csv":
+            self._load_csv()
+        elif path.suffix.lower() == ".json":
+            self._load_json()
+        else:
+            self._load_text()
+
+    def _load_csv(self) -> None:
+        """Load data from CSV file."""
+        import csv
+
+        with open(self.file_path, "r", newline="") as f:
+            reader = csv.DictReader(f)
+
+            if not reader.fieldnames:
+                raise ValueError("CSV file has no columns")
+
+            # Determine value column
+            if self.column and self.column in reader.fieldnames:
+                value_col = self.column
+            else:
+                # Use first numeric-looking column
+                value_col = reader.fieldnames[0]
+                for name in reader.fieldnames:
+                    if name.lower() not in ("time", "timestamp", "date", "index"):
+                        value_col = name
+                        break
+
+            # Check for timestamp column
+            time_col = None
+            for name in reader.fieldnames:
+                if name.lower() in ("time", "timestamp", "date", "datetime"):
+                    time_col = name
+                    break
+
+            for row in reader:
+                try:
+                    value = float(row[value_col])
+                    self._data.append(value)
+
+                    if time_col and row.get(time_col):
+                        try:
+                            ts = datetime.fromisoformat(row[time_col])
+                            self._timestamps.append(ts)
+                        except ValueError:
+                            self._timestamps.append(datetime.now())
+                    else:
+                        self._timestamps.append(datetime.now())
+
+                except (ValueError, KeyError):
+                    continue
+
+    def _load_json(self) -> None:
+        """Load data from JSON file."""
+        import json
+
+        with open(self.file_path, "r") as f:
+            data = json.load(f)
+
+        # Handle different JSON structures
+        if isinstance(data, list):
+            # Array of values or objects
+            for item in data:
+                if isinstance(item, (int, float)):
+                    self._data.append(float(item))
+                    self._timestamps.append(datetime.now())
+                elif isinstance(item, dict):
+                    # Extract value
+                    value = None
+                    if self.column and self.column in item:
+                        value = item[self.column]
+                    else:
+                        for key in ["value", "v", "data", "reading"]:
+                            if key in item:
+                                value = item[key]
+                                break
+                        if value is None and item:
+                            value = list(item.values())[0]
+
+                    if value is not None:
+                        try:
+                            self._data.append(float(value))
+                        except (TypeError, ValueError):
+                            continue
+
+                    # Extract timestamp
+                    ts = datetime.now()
+                    for key in ["time", "timestamp", "t", "datetime"]:
+                        if key in item:
+                            try:
+                                ts = datetime.fromisoformat(str(item[key]))
+                            except ValueError:
+                                pass
+                            break
+                    self._timestamps.append(ts)
+
+        elif isinstance(data, dict):
+            # Dictionary with values array
+            values = data.get("values", data.get("data", data.get("readings", [])))
+            if isinstance(values, list):
+                for v in values:
+                    try:
+                        self._data.append(float(v))
+                        self._timestamps.append(datetime.now())
+                    except (TypeError, ValueError):
+                        continue
+
+    def _load_text(self) -> None:
+        """Load data from plain text file (one value per line)."""
+        with open(self.file_path, "r") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                try:
+                    value = float(line.split()[0])
+                    self._data.append(value)
+                    self._timestamps.append(datetime.now())
+                except (ValueError, IndexError):
+                    continue
+
+
+# =============================================================================
+# File reading utilities
+# =============================================================================
+
+
+def read_csv_timeseries(
+    file_path: str,
+    value_column: Optional[str] = None,
+    time_column: Optional[str] = None,
+) -> tuple[list[float], list[datetime]]:
+    """
+    Read time series data from a CSV file.
+
+    Args:
+        file_path: Path to CSV file
+        value_column: Name of value column (None = auto-detect)
+        time_column: Name of timestamp column (None = auto-detect)
+
+    Returns:
+        Tuple of (values, timestamps)
+    """
+    import csv
+
+    values: list[float] = []
+    timestamps: list[datetime] = []
+
+    with open(file_path, "r", newline="") as f:
+        reader = csv.DictReader(f)
+
+        if not reader.fieldnames:
+            return values, timestamps
+
+        # Auto-detect columns
+        if value_column is None:
+            for name in reader.fieldnames:
+                if name.lower() not in ("time", "timestamp", "date", "index", "datetime"):
+                    value_column = name
+                    break
+            if value_column is None:
+                value_column = reader.fieldnames[0]
+
+        if time_column is None:
+            for name in reader.fieldnames:
+                if name.lower() in ("time", "timestamp", "date", "datetime"):
+                    time_column = name
+                    break
+
+        for row in reader:
+            try:
+                values.append(float(row[value_column]))
+
+                if time_column and row.get(time_column):
+                    try:
+                        timestamps.append(datetime.fromisoformat(row[time_column]))
+                    except ValueError:
+                        timestamps.append(datetime.now())
+                else:
+                    timestamps.append(datetime.now())
+            except (ValueError, KeyError):
+                continue
+
+    logger.info(f"Read {len(values)} values from {file_path}")
+    return values, timestamps
+
+
+def read_json_timeseries(
+    file_path: str,
+    value_key: Optional[str] = None,
+    time_key: Optional[str] = None,
+) -> tuple[list[float], list[datetime]]:
+    """
+    Read time series data from a JSON file.
+
+    Supports:
+    - Array of numbers: [1.0, 2.0, 3.0]
+    - Array of objects: [{"value": 1.0, "time": "..."}, ...]
+    - Object with values array: {"values": [1.0, 2.0], "timestamps": [...]}
+
+    Args:
+        file_path: Path to JSON file
+        value_key: Key for value in objects (None = auto-detect)
+        time_key: Key for timestamp in objects (None = auto-detect)
+
+    Returns:
+        Tuple of (values, timestamps)
+    """
+    import json
+
+    values: list[float] = []
+    timestamps: list[datetime] = []
+
+    with open(file_path, "r") as f:
+        data = json.load(f)
+
+    if isinstance(data, list):
+        for item in data:
+            if isinstance(item, (int, float)):
+                values.append(float(item))
+                timestamps.append(datetime.now())
+            elif isinstance(item, dict):
+                # Extract value
+                v = None
+                if value_key and value_key in item:
+                    v = item[value_key]
+                else:
+                    for key in ["value", "v", "data", "reading", "y"]:
+                        if key in item:
+                            v = item[key]
+                            break
+
+                if v is not None:
+                    try:
+                        values.append(float(v))
+                    except (TypeError, ValueError):
+                        continue
+
+                    # Extract timestamp
+                    ts = datetime.now()
+                    t_key = time_key
+                    if t_key is None:
+                        for key in ["time", "timestamp", "t", "datetime", "x"]:
+                            if key in item:
+                                t_key = key
+                                break
+
+                    if t_key and t_key in item:
+                        try:
+                            ts = datetime.fromisoformat(str(item[t_key]))
+                        except ValueError:
+                            pass
+
+                    timestamps.append(ts)
+
+    elif isinstance(data, dict):
+        # Extract values array
+        vals = None
+        if value_key and value_key in data:
+            vals = data[value_key]
+        else:
+            for key in ["values", "data", "readings", "y"]:
+                if key in data and isinstance(data[key], list):
+                    vals = data[key]
+                    break
+
+        if vals:
+            for v in vals:
+                try:
+                    values.append(float(v))
+                except (TypeError, ValueError):
+                    continue
+
+        # Extract timestamps array
+        times = None
+        if time_key and time_key in data:
+            times = data[time_key]
+        else:
+            for key in ["timestamps", "times", "t", "x"]:
+                if key in data and isinstance(data[key], list):
+                    times = data[key]
+                    break
+
+        if times and len(times) == len(values):
+            for t in times:
+                try:
+                    timestamps.append(datetime.fromisoformat(str(t)))
+                except ValueError:
+                    timestamps.append(datetime.now())
+        else:
+            timestamps = [datetime.now() for _ in values]
+
+    logger.info(f"Read {len(values)} values from {file_path}")
+    return values, timestamps

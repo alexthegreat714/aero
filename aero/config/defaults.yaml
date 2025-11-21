@@ -120,9 +120,49 @@ web:
 
 # Experiment configuration
 experiments:
-  camera_index: 0
-  sensor_poll_interval: 0.1
+  # Camera settings
+  camera:
+    default_index: 0
+    default_width: 640
+    default_height: 480
+    default_fps: 30
+    capture_format: "png"
+
+  # Optical flow settings
+  flow:
+    pyr_scale: 0.5
+    levels: 3
+    winsize: 15
+    iterations: 3
+    poly_n: 5
+    poly_sigma: 1.2
+    motion_threshold: 1.0  # Magnitude threshold for motion detection
+
+  # Sensor settings
+  sensor:
+    poll_interval: 0.1
+    buffer_size: 1000
+    supported_formats:
+      - ".csv"
+      - ".json"
+      - ".txt"
+
+  # Motion detection
+  motion:
+    threshold: 25
+    min_area: 500
+    dilate_iterations: 2
+
+  # Synthetic experiments
+  synthetic:
+    default_seed: null  # null for random
+    default_flow_type: "uniform"
+    default_pattern: "sine"
+
+  # Output settings
   data_output_dir: "./data/experiments"
+  save_raw_frames: false
+  max_stored_experiments: 100
 
 # Pipeline configuration
 pipeline:

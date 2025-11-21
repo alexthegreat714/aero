@@ -64,6 +64,7 @@ def _register_routes(app: FastAPI) -> None:
         ocr_routes,
         web_routes,
         agent_routes,
+        experiment_routes,
     )
 
     # Include route modules
@@ -72,6 +73,7 @@ def _register_routes(app: FastAPI) -> None:
     app.include_router(ocr_routes.router, prefix="/api/ocr", tags=["OCR"])
     app.include_router(web_routes.router, prefix="/api/web", tags=["Web"])
     app.include_router(agent_routes.router, prefix="/api/agent", tags=["Agent"])
+    app.include_router(experiment_routes.router, prefix="/api/experiments", tags=["Experiments"])
 
     # Root endpoint
     @app.get("/", tags=["Health"])

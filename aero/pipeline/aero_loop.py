@@ -385,7 +385,7 @@ class ScientificReasoningLoop:
 
         # Import components
         from aero.pipeline.hypothesis import Hypothesis, generate_initial_hypotheses, generate_secondary_hypotheses
-        from aero.pipeline.planner import plan_simulations, plan_experiments, SimulationJobConfig
+        from aero.pipeline.planner import plan_simulations, plan_experiments, SimulationJobConfig, execute_experiment
         from aero.pipeline.validator import validate_simulation, validate_experiment, SimulationValidationResult
         from aero.pipeline.patterns import detect_patterns, compare_patterns, ScientificPattern
         from aero.pipeline.refinement import refine_hypotheses
@@ -394,6 +394,7 @@ class ScientificReasoningLoop:
         self._generate_secondary = generate_secondary_hypotheses
         self._plan_simulations = plan_simulations
         self._plan_experiments = plan_experiments
+        self._execute_experiment = execute_experiment
         self._validate_simulation = validate_simulation
         self._validate_experiment = validate_experiment
         self._detect_patterns = detect_patterns
@@ -782,3 +783,75 @@ class ScientificReasoningLoop:
         self._current_hypotheses = []
         self._iteration_history = []
         logger.info("Loop state reset")
+
+    def run_experiment(self, experiment_config) -> dict:
+        """
+        Execute an experiment using the configured experiment system.
+
+        Args:
+            experiment_config: ExperimentConfig object or dict
+
+        Returns:
+            Dictionary with experiment results
+        """
+        from aero.pipeline.planner import ExperimentConfig
+
+        # Convert dict to config if needed
+        if isinstance(experiment_config, dict):
+            from aero.pipeline.planner import ExperimentType
+            exp_type = experiment_config.get("exp_type", "synthetic_flow")
+            if isinstance(exp_type, str):
+                try:
+                    exp_type = ExperimentType(exp_type)
+                except ValueError:
+                    exp_type = ExperimentType.SYNTHETIC_FLOW
+
+            experiment_config = ExperimentConfig(
+                exp_type=exp_type,
+                hypothesis_id=experiment_config.get("hypothesis_id", ""),
+                source=experiment_config.get("source", ""),
+                parameters=experiment_config.get("parameters", {}),
+            )
+
+        try:
+            result = self._execute_experiment(experiment_config)
+            return result.to_dict()
+        except Exception as e:
+            logger.error(f"Experiment execution error: {e}")
+            return {
+                "experiment_type": str(experiment_config.exp_type),
+                "success": False,
+                "error": str(e),
+            }
+
+    def run_synthetic_experiment(
+        self,
+        exp_type: str = "synthetic_flow",
+        **params,
+    ) -> dict:
+        """
+        Run a synthetic experiment for testing.
+
+        Args:
+            exp_type: Type of synthetic experiment
+                     ("synthetic_flow" or "synthetic_timeseries")
+            **params: Experiment parameters
+
+        Returns:
+            Experiment result dictionary
+        """
+        from aero.pipeline.planner import ExperimentConfig, ExperimentType
+
+        try:
+            experiment_type = ExperimentType(exp_type)
+        except ValueError:
+            experiment_type = ExperimentType.SYNTHETIC_FLOW
+
+        config = ExperimentConfig(
+            exp_type=experiment_type,
+            hypothesis_id="synthetic_test",
+            source="",
+            parameters=params,
+        )
+
+        return self.run_experiment(config)
