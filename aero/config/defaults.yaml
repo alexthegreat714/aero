@@ -131,6 +131,35 @@ pipeline:
   retry_on_failure: true
   max_retries: 3
 
+# Reasoning configuration (Scientific Reasoning Loop)
+reasoning:
+  max_iterations: 5
+  confidence_threshold: 0.85
+  drop_threshold: 0.2
+  pattern_convergence_eps: 1.0e-3
+  max_simulations_per_iteration: 3
+  timeout_per_simulation: 60.0
+
+  # Hypothesis generation
+  hypothesis:
+    num_initial: 3
+    use_rag: true
+    use_templates: true
+
+  # Refinement settings
+  refinement:
+    validation_strong_bonus: 0.15
+    validation_weak_penalty: -0.15
+    pattern_match_bonus: 0.10
+    iteration_bonus: 0.02
+
+  # Pattern detection
+  patterns:
+    symmetry_threshold: 0.05
+    periodicity_power_threshold: 0.5
+    oscillation_crossing_rate: 0.2
+    shock_gradient_ratio: 5.0
+
 # Logging configuration
 logging:
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"

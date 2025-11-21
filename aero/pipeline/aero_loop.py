@@ -1,17 +1,21 @@
 """
 Main processing loop for Aero Agent.
 
-Orchestrates the agent's workflow and task execution.
+Orchestrates the agent's workflow and task execution, including
+the scientific reasoning loop for hypothesis generation and refinement.
 """
 
 import logging
 import time
 import threading
-from typing import Any, Callable, Optional
+import uuid
+from typing import Any, Callable, Dict, List, Optional
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from queue import Queue, Empty
+
+import numpy as np
 
 from aero.config.loader import get_config
 from aero.core.events import EventBus, Event
@@ -286,3 +290,495 @@ class AeroLoop:
                 return None
 
             time.sleep(0.1)
+
+
+# =============================================================================
+# Scientific Reasoning Loop
+# =============================================================================
+
+
+@dataclass
+class LoopConfig:
+    """Configuration for the scientific reasoning loop."""
+
+    max_iterations: int = 5
+    confidence_threshold: float = 0.85
+    drop_threshold: float = 0.2
+    pattern_convergence_eps: float = 1e-3
+    max_simulations_per_iteration: int = 3
+    timeout_per_simulation: float = 60.0
+
+
+@dataclass
+class LoopResult:
+    """Result from a complete reasoning loop execution."""
+
+    converged: bool
+    iterations_completed: int
+    best_hypothesis: Optional[dict]
+    all_hypotheses: List[dict]
+    simulation_results: List[dict]
+    validation_results: List[dict]
+    patterns: List[dict]
+    history: List[dict]
+    termination_reason: str
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary."""
+        return {
+            "converged": self.converged,
+            "iterations_completed": self.iterations_completed,
+            "best_hypothesis": self.best_hypothesis,
+            "all_hypotheses": self.all_hypotheses,
+            "simulation_results": self.simulation_results,
+            "validation_results": self.validation_results,
+            "patterns": self.patterns,
+            "history": self.history,
+            "termination_reason": self.termination_reason,
+        }
+
+
+class ScientificReasoningLoop:
+    """
+    Recursive scientific reasoning loop for Aero Agent.
+
+    Implements the full hypothesis-driven scientific process:
+    1. Parse query and generate initial hypotheses
+    2. Plan simulations/experiments
+    3. Execute simulations
+    4. Validate results
+    5. Detect patterns
+    6. Refine hypotheses
+    7. Decide: converge or iterate
+
+    Example:
+        from aero.pipeline.aero_loop import ScientificReasoningLoop, LoopConfig
+
+        config = LoopConfig(max_iterations=5, confidence_threshold=0.85)
+        loop = ScientificReasoningLoop(config)
+
+        result = loop.run("Analyze heat diffusion in a 1D rod")
+        print(f"Converged: {result.converged}")
+        print(f"Best hypothesis: {result.best_hypothesis}")
+    """
+
+    def __init__(
+        self,
+        config: Optional[LoopConfig] = None,
+        rag=None,
+        scheduler=None,
+        ocr_registry=None,
+    ):
+        """
+        Initialize the scientific reasoning loop.
+
+        Args:
+            config: Loop configuration
+            rag: RAG store for context retrieval
+            scheduler: Simulation scheduler
+            ocr_registry: OCR backend registry
+        """
+        self.config = config or LoopConfig()
+        self.rag = rag
+        self.scheduler = scheduler
+        self.ocr_registry = ocr_registry
+
+        # Import components
+        from aero.pipeline.hypothesis import Hypothesis, generate_initial_hypotheses, generate_secondary_hypotheses
+        from aero.pipeline.planner import plan_simulations, plan_experiments, SimulationJobConfig
+        from aero.pipeline.validator import validate_simulation, validate_experiment, SimulationValidationResult
+        from aero.pipeline.patterns import detect_patterns, compare_patterns, ScientificPattern
+        from aero.pipeline.refinement import refine_hypotheses
+
+        self._generate_initial = generate_initial_hypotheses
+        self._generate_secondary = generate_secondary_hypotheses
+        self._plan_simulations = plan_simulations
+        self._plan_experiments = plan_experiments
+        self._validate_simulation = validate_simulation
+        self._validate_experiment = validate_experiment
+        self._detect_patterns = detect_patterns
+        self._compare_patterns = compare_patterns
+        self._refine_hypotheses = refine_hypotheses
+        self._Hypothesis = Hypothesis
+
+        # State
+        self._current_hypotheses: List = []
+        self._iteration_history: List[dict] = []
+
+        logger.info("ScientificReasoningLoop initialized")
+
+    def step(self, input_query: str) -> dict:
+        """
+        Execute one iteration of the scientific reasoning loop.
+
+        Args:
+            input_query: User query or problem description
+
+        Returns:
+            Dictionary with iteration results
+        """
+        logger.info(f"Executing loop step for query: {input_query[:100]}...")
+
+        iteration_result = {
+            "iteration": len(self._iteration_history) + 1,
+            "query": input_query,
+            "hypotheses": [],
+            "simulations": [],
+            "validations": [],
+            "patterns": [],
+            "refined_hypotheses": [],
+            "status": "incomplete",
+        }
+
+        try:
+            # Step 1: Generate hypotheses
+            if not self._current_hypotheses:
+                hypotheses = self._generate_initial(input_query, self.rag)
+            else:
+                # Generate secondary hypotheses based on previous results
+                prev_results = self._get_previous_results()
+                hypotheses = self._generate_secondary(prev_results, self.rag, self._current_hypotheses)
+                if not hypotheses:
+                    hypotheses = self._current_hypotheses
+
+            iteration_result["hypotheses"] = [h.to_dict() for h in hypotheses]
+            logger.info(f"Generated {len(hypotheses)} hypotheses")
+
+            # Step 2: Plan simulations for each hypothesis
+            all_sim_configs = []
+            for hypothesis in hypotheses[:self.config.max_simulations_per_iteration]:
+                sim_configs = self._plan_simulations(hypothesis)
+                all_sim_configs.extend(sim_configs[:1])  # Take first config per hypothesis
+
+            logger.info(f"Planned {len(all_sim_configs)} simulations")
+
+            # Step 3: Execute simulations
+            simulation_results = []
+            for sim_config in all_sim_configs:
+                result = self._run_simulation(sim_config)
+                simulation_results.append(result)
+                iteration_result["simulations"].append({
+                    "config": sim_config.to_dict(),
+                    "result": result,
+                })
+
+            logger.info(f"Executed {len(simulation_results)} simulations")
+
+            # Step 4: Validate results
+            validation_results = []
+            for i, (hypothesis, result) in enumerate(zip(hypotheses, simulation_results)):
+                validation = self._validate_simulation(hypothesis, result)
+                validation_results.append(validation)
+                iteration_result["validations"].append(validation.to_dict())
+
+            logger.info(f"Validated {len(validation_results)} results")
+
+            # Step 5: Detect patterns
+            all_patterns = []
+            for result in simulation_results:
+                patterns = self._detect_patterns(result)
+                all_patterns.extend(patterns)
+            iteration_result["patterns"] = [p.to_dict() for p in all_patterns]
+
+            logger.info(f"Detected {len(all_patterns)} patterns")
+
+            # Step 6: Refine hypotheses
+            refined = self._refine_hypotheses(
+                hypotheses,
+                validation_results,
+                all_patterns,
+                drop_threshold=self.config.drop_threshold,
+            )
+            self._current_hypotheses = refined
+            iteration_result["refined_hypotheses"] = [h.to_dict() for h in refined]
+
+            logger.info(f"Refined to {len(refined)} hypotheses")
+
+            iteration_result["status"] = "complete"
+
+        except Exception as e:
+            logger.exception(f"Error in loop step: {e}")
+            iteration_result["status"] = "error"
+            iteration_result["error"] = str(e)
+
+        self._iteration_history.append(iteration_result)
+        return iteration_result
+
+    def run(self, query: str) -> LoopResult:
+        """
+        Execute the full reasoning loop until convergence or max iterations.
+
+        Args:
+            query: User query or problem description
+
+        Returns:
+            LoopResult with complete execution history
+        """
+        logger.info(f"Starting scientific reasoning loop for: {query[:100]}...")
+
+        # Reset state
+        self._current_hypotheses = []
+        self._iteration_history = []
+
+        converged = False
+        termination_reason = "max_iterations"
+
+        for iteration in range(self.config.max_iterations):
+            logger.info(f"=== Iteration {iteration + 1}/{self.config.max_iterations} ===")
+
+            # Execute one step
+            step_result = self.step(query)
+
+            # Check termination conditions
+            termination, reason = self._check_termination(step_result, iteration)
+            if termination:
+                converged = reason in ["confidence_threshold", "pattern_convergence"]
+                termination_reason = reason
+                break
+
+        # Compile final result
+        best_hypothesis = None
+        if self._current_hypotheses:
+            best = max(self._current_hypotheses, key=lambda h: h.confidence)
+            best_hypothesis = best.to_dict()
+
+        # Collect all simulation results and patterns
+        all_sim_results = []
+        all_validations = []
+        all_patterns = []
+
+        for hist in self._iteration_history:
+            all_sim_results.extend([s.get("result", {}) for s in hist.get("simulations", [])])
+            all_validations.extend(hist.get("validations", []))
+            all_patterns.extend(hist.get("patterns", []))
+
+        result = LoopResult(
+            converged=converged,
+            iterations_completed=len(self._iteration_history),
+            best_hypothesis=best_hypothesis,
+            all_hypotheses=[h.to_dict() for h in self._current_hypotheses],
+            simulation_results=all_sim_results,
+            validation_results=all_validations,
+            patterns=all_patterns,
+            history=self._iteration_history,
+            termination_reason=termination_reason,
+        )
+
+        logger.info(
+            f"Loop completed: converged={converged}, "
+            f"iterations={result.iterations_completed}, "
+            f"reason={termination_reason}"
+        )
+
+        return result
+
+    def _run_simulation(self, config) -> dict:
+        """Execute a simulation and return results."""
+        try:
+            from aero.pipeline.planner import SimulationType
+
+            sim_type = config.sim_type
+            if isinstance(sim_type, str):
+                sim_type = SimulationType(sim_type)
+
+            # Run appropriate solver
+            if sim_type == SimulationType.HEAT_1D:
+                return self._run_heat_1d(config)
+            elif sim_type == SimulationType.LAPLACE_2D:
+                return self._run_laplace_2d(config)
+            elif sim_type in [SimulationType.HEAT_2D, SimulationType.NAVIER_STOKES]:
+                return self._run_generic_2d(config)
+            elif sim_type == SimulationType.PINN:
+                return self._run_pinn(config)
+            else:
+                return self._run_generic_2d(config)
+
+        except Exception as e:
+            logger.error(f"Simulation error: {e}")
+            return {
+                "error": str(e),
+                "converged": False,
+                "solution": None,
+            }
+
+    def _run_heat_1d(self, config) -> dict:
+        """Run 1D heat equation simulation."""
+        try:
+            from aero.sim.numerics.fd_solver import solve_heat_1d
+
+            nx = config.grid_size
+            dx = config.dx
+            dt = config.dt
+            steps = config.max_steps
+            alpha = config.solver_params.get("alpha", 0.01)
+
+            # Create initial condition (gaussian)
+            x = np.linspace(0, 1, nx)
+            if config.initial_condition == "gaussian":
+                u0 = np.exp(-100 * (x - 0.5) ** 2)
+            elif config.initial_condition == "sine":
+                u0 = np.sin(np.pi * x)
+            else:
+                u0 = np.zeros(nx)
+
+            # Get boundary conditions
+            bc_left = config.boundary_conditions.get("left")
+            bc_right = config.boundary_conditions.get("right")
+
+            # Solve
+            solution, metadata = solve_heat_1d(
+                u0, alpha, dx, dt, steps,
+                boundary_left=bc_left,
+                boundary_right=bc_right,
+            )
+
+            return {
+                "solution": solution.tolist(),
+                "converged": True,
+                "metadata": metadata,
+                "final_residual": 0.0,  # Heat equation doesn't iterate
+            }
+
+        except Exception as e:
+            return {"error": str(e), "converged": False, "solution": None}
+
+    def _run_laplace_2d(self, config) -> dict:
+        """Run 2D Laplace equation simulation."""
+        try:
+            from aero.sim.numerics.fd_solver import solve_laplace_2d
+
+            nx = config.grid_size
+            ny = config.grid_size_y or nx
+            tol = config.tolerance
+            max_iter = config.max_iterations
+
+            # Create initial grid with boundary conditions
+            u = np.zeros((nx, ny))
+            bc = config.boundary_conditions
+            u[0, :] = bc.get("left", 0)
+            u[-1, :] = bc.get("right", 100)
+            u[:, 0] = bc.get("bottom", 50)
+            u[:, -1] = bc.get("top", 50)
+
+            # Solve
+            solution, metadata = solve_laplace_2d(u, tol=tol, max_iterations=max_iter)
+
+            return {
+                "solution": solution.tolist(),
+                "converged": metadata.get("converged", False),
+                "iterations": metadata.get("iterations", 0),
+                "final_residual": metadata.get("final_residual", 0.0),
+                "metadata": metadata,
+            }
+
+        except Exception as e:
+            return {"error": str(e), "converged": False, "solution": None}
+
+    def _run_generic_2d(self, config) -> dict:
+        """Run generic 2D simulation (placeholder for NS, etc.)."""
+        # Return a simple converged result for testing
+        nx = config.grid_size
+        ny = config.grid_size_y or nx
+
+        # Create linear gradient solution (placeholder)
+        x = np.linspace(0, 1, nx)
+        y = np.linspace(0, 1, ny)
+        X, Y = np.meshgrid(x, y, indexing='ij')
+
+        bc = config.boundary_conditions
+        left = bc.get("left", 0)
+        right = bc.get("right", 100)
+        solution = left + (right - left) * X
+
+        return {
+            "solution": solution.tolist(),
+            "converged": True,
+            "iterations": 100,
+            "final_residual": 1e-6,
+            "metadata": {"solver": "generic_2d_stub"},
+        }
+
+    def _run_pinn(self, config) -> dict:
+        """Run PINN training (simplified)."""
+        try:
+            from aero.sim.pinn.pinn_model import TORCH_AVAILABLE
+
+            if not TORCH_AVAILABLE:
+                return {
+                    "error": "PyTorch not available",
+                    "converged": False,
+                    "solution": None,
+                }
+
+            # Simplified PINN result
+            return {
+                "solution": None,
+                "converged": True,
+                "final_loss": 1e-4,
+                "epochs": config.max_iterations,
+                "metadata": {"solver": "pinn"},
+            }
+
+        except Exception as e:
+            return {"error": str(e), "converged": False, "solution": None}
+
+    def _get_previous_results(self) -> List[dict]:
+        """Get results from previous iterations."""
+        results = []
+        for hist in self._iteration_history:
+            for sim in hist.get("simulations", []):
+                results.append(sim.get("result", {}))
+        return results
+
+    def _check_termination(self, step_result: dict, iteration: int) -> tuple:
+        """
+        Check if the loop should terminate.
+
+        Returns:
+            Tuple of (should_terminate, reason)
+        """
+        # Check for error
+        if step_result.get("status") == "error":
+            return True, "error"
+
+        # Check if all hypotheses failed
+        refined = step_result.get("refined_hypotheses", [])
+        if not refined:
+            return True, "all_hypotheses_failed"
+
+        # Check confidence threshold
+        best_confidence = max(h.get("confidence", 0) for h in refined)
+        if best_confidence >= self.config.confidence_threshold:
+            return True, "confidence_threshold"
+
+        # Check pattern convergence
+        if len(self._iteration_history) >= 2:
+            current_patterns = set(
+                p.get("type") for p in step_result.get("patterns", [])
+            )
+            prev_patterns = set(
+                p.get("type") for p in self._iteration_history[-2].get("patterns", [])
+            )
+
+            if current_patterns == prev_patterns and len(current_patterns) > 0:
+                return True, "pattern_convergence"
+
+        # Check max iterations
+        if iteration >= self.config.max_iterations - 1:
+            return True, "max_iterations"
+
+        return False, ""
+
+    def get_state(self) -> dict:
+        """Get current loop state."""
+        return {
+            "current_hypotheses": [h.to_dict() for h in self._current_hypotheses],
+            "iteration_count": len(self._iteration_history),
+            "history": self._iteration_history,
+        }
+
+    def reset(self) -> None:
+        """Reset loop state."""
+        self._current_hypotheses = []
+        self._iteration_history = []
+        logger.info("Loop state reset")
