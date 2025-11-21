@@ -1,0 +1,382 @@
+#!/usr/bin/env python3
+"""
+Aero Agent Launcher
+
+Windows-friendly launcher that:
+1. Loads configuration
+2. Prints system diagnostics
+3. Initializes registries
+4. Starts the API server
+
+Usage:
+    python scripts/launch_aero.py
+    python scripts/launch_aero.py --host 0.0.0.0 --port 9000
+    python scripts/launch_aero.py --diagnostics-only
+"""
+
+import argparse
+import logging
+import os
+import platform
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+
+def setup_logging(level: str = "INFO") -> None:
+    """Configure logging for the launcher."""
+    logging.basicConfig(
+        level=getattr(logging, level.upper(), logging.INFO),
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    )
+
+
+def print_header() -> None:
+    """Print the Aero Agent header."""
+    header = """
+    ╔═══════════════════════════════════════════════════════════════╗
+    ║                                                               ║
+    ║     █████╗ ███████╗██████╗  ██████╗                          ║
+    ║    ██╔══██╗██╔════╝██╔══██╗██╔═══██╗                         ║
+    ║    ███████║█████╗  ██████╔╝██║   ██║                         ║
+    ║    ██╔══██║██╔══╝  ██╔══██╗██║   ██║                         ║
+    ║    ██║  ██║███████╗██║  ██║╚██████╔╝                         ║
+    ║    ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝ ╚═════╝                          ║
+    ║                                                               ║
+    ║    Aerodynamics Research Agent v0.1.0                        ║
+    ║                                                               ║
+    ╚═══════════════════════════════════════════════════════════════╝
+    """
+    print(header)
+
+
+def get_python_info() -> dict:
+    """Get Python environment information."""
+    return {
+        "version": platform.python_version(),
+        "implementation": platform.python_implementation(),
+        "compiler": platform.python_compiler(),
+        "executable": sys.executable,
+    }
+
+
+def get_system_info() -> dict:
+    """Get system information."""
+    return {
+        "os": platform.system(),
+        "os_version": platform.version(),
+        "architecture": platform.machine(),
+        "processor": platform.processor() or "Unknown",
+        "cpu_count": os.cpu_count() or 0,
+    }
+
+
+def check_cuda() -> dict:
+    """Check CUDA/GPU availability."""
+    result = {
+        "available": False,
+        "version": None,
+        "device_name": None,
+        "device_count": 0,
+    }
+
+    try:
+        import torch
+        result["available"] = torch.cuda.is_available()
+        if result["available"]:
+            result["version"] = torch.version.cuda
+            result["device_count"] = torch.cuda.device_count()
+            if result["device_count"] > 0:
+                result["device_name"] = torch.cuda.get_device_name(0)
+    except ImportError:
+        result["error"] = "PyTorch not installed"
+    except Exception as e:
+        result["error"] = str(e)
+
+    return result
+
+
+def check_tesseract() -> dict:
+    """Check Tesseract OCR availability."""
+    result = {
+        "available": False,
+        "version": None,
+        "path": None,
+    }
+
+    tesseract_path = shutil.which("tesseract")
+    if tesseract_path:
+        result["path"] = tesseract_path
+        result["available"] = True
+
+        try:
+            proc = subprocess.run(
+                ["tesseract", "--version"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            output = proc.stdout or proc.stderr
+            if output:
+                result["version"] = output.strip().split("\n")[0]
+        except Exception as e:
+            result["error"] = str(e)
+
+    return result
+
+
+def check_ollama() -> dict:
+    """Check Ollama availability and models."""
+    result = {
+        "installed": False,
+        "running": False,
+        "models": [],
+    }
+
+    ollama_path = shutil.which("ollama")
+    if not ollama_path:
+        return result
+
+    result["installed"] = True
+
+    try:
+        proc = subprocess.run(
+            ["ollama", "list"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+
+        if proc.returncode == 0:
+            result["running"] = True
+            lines = proc.stdout.strip().split("\n")
+            # Skip header line
+            for line in lines[1:]:
+                if line.strip():
+                    model_name = line.split()[0]
+                    result["models"].append(model_name)
+    except subprocess.TimeoutExpired:
+        result["error"] = "Ollama command timed out"
+    except Exception as e:
+        result["error"] = str(e)
+
+    return result
+
+
+def check_webcam() -> dict:
+    """Check webcam availability."""
+    result = {
+        "available": False,
+        "index": None,
+    }
+
+    try:
+        import cv2
+        cap = cv2.VideoCapture(0)
+        if cap.isOpened():
+            result["available"] = True
+            result["index"] = 0
+            cap.release()
+    except ImportError:
+        result["error"] = "OpenCV not installed"
+    except Exception as e:
+        result["error"] = str(e)
+
+    return result
+
+
+def print_diagnostics() -> dict:
+    """Print system diagnostics and return results."""
+    print("\n" + "=" * 60)
+    print("SYSTEM DIAGNOSTICS")
+    print("=" * 60)
+
+    diagnostics = {}
+
+    # Python info
+    print("\n[Python Environment]")
+    python_info = get_python_info()
+    diagnostics["python"] = python_info
+    print(f"  Version:    {python_info['version']}")
+    print(f"  Impl:       {python_info['implementation']}")
+    print(f"  Executable: {python_info['executable']}")
+
+    # System info
+    print("\n[System Information]")
+    sys_info = get_system_info()
+    diagnostics["system"] = sys_info
+    print(f"  OS:         {sys_info['os']} {sys_info['os_version']}")
+    print(f"  Arch:       {sys_info['architecture']}")
+    print(f"  CPU Cores:  {sys_info['cpu_count']}")
+
+    # CUDA/GPU
+    print("\n[GPU/CUDA]")
+    cuda_info = check_cuda()
+    diagnostics["cuda"] = cuda_info
+    if cuda_info["available"]:
+        print(f"  Available:  Yes")
+        print(f"  CUDA Ver:   {cuda_info['version']}")
+        print(f"  GPU:        {cuda_info['device_name']}")
+        print(f"  Devices:    {cuda_info['device_count']}")
+    else:
+        print(f"  Available:  No")
+        if "error" in cuda_info:
+            print(f"  Note:       {cuda_info['error']}")
+
+    # Tesseract
+    print("\n[Tesseract OCR]")
+    tess_info = check_tesseract()
+    diagnostics["tesseract"] = tess_info
+    if tess_info["available"]:
+        print(f"  Available:  Yes")
+        print(f"  Version:    {tess_info['version']}")
+        print(f"  Path:       {tess_info['path']}")
+    else:
+        print(f"  Available:  No (not found in PATH)")
+
+    # Ollama
+    print("\n[Ollama]")
+    ollama_info = check_ollama()
+    diagnostics["ollama"] = ollama_info
+    if ollama_info["installed"]:
+        print(f"  Installed:  Yes")
+        print(f"  Running:    {'Yes' if ollama_info['running'] else 'No'}")
+        if ollama_info["models"]:
+            print(f"  Models:     {', '.join(ollama_info['models'][:5])}")
+            if len(ollama_info["models"]) > 5:
+                print(f"              ... and {len(ollama_info['models']) - 5} more")
+        else:
+            print(f"  Models:     None found")
+    else:
+        print(f"  Installed:  No")
+
+    # Webcam
+    print("\n[Webcam]")
+    webcam_info = check_webcam()
+    diagnostics["webcam"] = webcam_info
+    if webcam_info["available"]:
+        print(f"  Available:  Yes (index {webcam_info['index']})")
+    else:
+        print(f"  Available:  No")
+        if "error" in webcam_info:
+            print(f"  Note:       {webcam_info['error']}")
+
+    # DeepSeek OCR check
+    print("\n[DeepSeek OCR]")
+    deepseek_available = any(
+        "deepseek" in m.lower()
+        for m in ollama_info.get("models", [])
+    )
+    diagnostics["deepseek_ocr"] = {"available": deepseek_available}
+    if deepseek_available:
+        print(f"  Available:  Yes (via Ollama)")
+    else:
+        print(f"  Available:  No (model not found in Ollama)")
+
+    print("\n" + "=" * 60)
+
+    return diagnostics
+
+
+def initialize_registries() -> None:
+    """Initialize component registries."""
+    print("\n[Initializing Registries]")
+
+    try:
+        from aero.core.registry import get_registry_manager
+        manager = get_registry_manager()
+        print(f"  Created registries: {', '.join(manager.list_registries())}")
+    except Exception as e:
+        print(f"  Error: {e}")
+
+
+def load_configuration() -> None:
+    """Load configuration."""
+    print("\n[Loading Configuration]")
+
+    try:
+        from aero.config.loader import load_config
+        config = load_config()
+        print(f"  Config loaded successfully")
+        print(f"  Debug mode: {config.debug}")
+        print(f"  Log level: {config.log_level}")
+    except Exception as e:
+        print(f"  Error: {e}")
+
+
+def start_server(host: str, port: int) -> None:
+    """Start the API server."""
+    print("\n[Starting API Server]")
+    print(f"  Host: {host}")
+    print(f"  Port: {port}")
+    print(f"  Docs: http://{host}:{port}/docs")
+    print("\n" + "=" * 60)
+    print("Server starting... Press Ctrl+C to stop.")
+    print("=" * 60 + "\n")
+
+    try:
+        from aero.api.server import run_server
+        run_server(host=host, port=port)
+    except KeyboardInterrupt:
+        print("\nServer stopped by user.")
+    except Exception as e:
+        print(f"\nServer error: {e}")
+        sys.exit(1)
+
+
+def main():
+    """Main entry point."""
+    parser = argparse.ArgumentParser(
+        description="Aero Agent Launcher",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Server host (default: 127.0.0.1)",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="Server port (default: 8000)",
+    )
+    parser.add_argument(
+        "--diagnostics-only",
+        action="store_true",
+        help="Run diagnostics only, don't start server",
+    )
+    parser.add_argument(
+        "--log-level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="Logging level (default: INFO)",
+    )
+
+    args = parser.parse_args()
+
+    # Setup
+    setup_logging(args.log_level)
+    print_header()
+
+    # Run diagnostics
+    print_diagnostics()
+
+    if args.diagnostics_only:
+        print("\nDiagnostics complete. Exiting.")
+        return
+
+    # Initialize
+    load_configuration()
+    initialize_registries()
+
+    # Start server
+    start_server(args.host, args.port)
+
+
+if __name__ == "__main__":
+    main()

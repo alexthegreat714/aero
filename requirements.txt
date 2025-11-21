@@ -1,0 +1,56 @@
+# Aero Agent Requirements
+# Install with: pip install -r requirements.txt
+
+# Web framework
+fastapi>=0.100.0
+uvicorn>=0.23.0
+
+# Configuration
+pyyaml>=6.0
+
+# Progress bars
+tqdm>=4.65.0
+
+# HTTP requests
+requests>=2.31.0
+
+# Image processing
+opencv-python>=4.8.0
+Pillow>=10.0.0
+
+# Numerical computing
+numpy>=1.24.0
+scipy>=1.11.0
+
+# Deep learning (CPU/GPU auto-detect)
+torch>=2.0.0
+
+# File upload handling
+python-multipart>=0.0.6
+
+# =============================================================================
+# Optional dependencies (uncomment as needed)
+# =============================================================================
+
+# OCR backends
+# pytesseract>=0.3.10    # Requires Tesseract system install
+# easyocr>=1.7.0         # Neural network OCR
+
+# PDF processing
+# PyPDF2>=3.0.0
+# pdfplumber>=0.10.0
+
+# ML/Embeddings
+# sentence-transformers>=2.2.0
+
+# =============================================================================
+# Development dependencies (uncomment for dev environment)
+# =============================================================================
+
+# pytest>=7.4.0
+# pytest-cov>=4.1.0
+# pytest-asyncio>=0.21.0
+# black>=23.7.0
+# isort>=5.12.0
+# mypy>=1.4.0
+# ruff>=0.0.280
