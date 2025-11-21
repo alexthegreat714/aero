@@ -29,19 +29,35 @@ torch>=2.0.0
 python-multipart>=0.0.6
 
 # =============================================================================
+# RAG Dependencies
+# =============================================================================
+
+# Database backends (DuckDB preferred, SQLite fallback is built-in)
+duckdb>=0.9.0
+
+# PDF processing
+pypdf>=3.0.0
+# pdfplumber>=0.10.0  # Alternative PDF backend
+
+# Word documents
+python-docx>=0.8.11
+
+# HTML parsing
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
+
+# =============================================================================
 # Optional dependencies (uncomment as needed)
 # =============================================================================
 
 # OCR backends
 # pytesseract>=0.3.10    # Requires Tesseract system install
 # easyocr>=1.7.0         # Neural network OCR
+# pdf2image>=1.16.0      # PDF to image for OCR
+# PyMuPDF>=1.23.0        # Alternative PDF rendering
 
-# PDF processing
-# PyPDF2>=3.0.0
-# pdfplumber>=0.10.0
-
-# ML/Embeddings
-# sentence-transformers>=2.2.0
+# ML/Embeddings (for better semantic search)
+# sentence-transformers>=2.2.0  # Local embedding models
 
 # =============================================================================
 # Development dependencies (uncomment for dev environment)
@@ -50,6 +66,7 @@ python-multipart>=0.0.6
 # pytest>=7.4.0
 # pytest-cov>=4.1.0
 # pytest-asyncio>=0.21.0
+# httpx>=0.24.0          # For testing FastAPI
 # black>=23.7.0
 # isort>=5.12.0
 # mypy>=1.4.0

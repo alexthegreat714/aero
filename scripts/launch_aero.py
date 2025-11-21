@@ -287,11 +287,59 @@ def initialize_registries() -> None:
     print("\n[Initializing Registries]")
 
     try:
-        from aero.core.registry import get_registry_manager
+        from aero.core.registry import get_registry_manager, register_rag_components
         manager = get_registry_manager()
         print(f"  Created registries: {', '.join(manager.list_registries())}")
+
+        # Register RAG components
+        print("  Registering RAG components...")
+        register_rag_components()
+        print(f"  RAG registries: rag_stores, rag_readers, embedders")
+
     except Exception as e:
         print(f"  Error: {e}")
+
+
+def initialize_rag() -> dict:
+    """Initialize RAG system and return status."""
+    print("\n[Initializing RAG System]")
+
+    result = {
+        "store": None,
+        "embedder": None,
+        "status": "not_initialized",
+    }
+
+    try:
+        from aero.rag.store import create_vector_store, get_default_store
+        from aero.rag.embedder import get_default_embedder, detect_embedding_backends
+
+        # Check embedding backends
+        backends = detect_embedding_backends()
+        print(f"  Embedding backends:")
+        print(f"    Ollama:              {'Yes' if backends['ollama'] else 'No'}")
+        print(f"    SentenceTransformers: {'Yes' if backends['sentence_transformers'] else 'No'}")
+        print(f"    Hash fallback:       Yes")
+
+        # Initialize default embedder
+        embedder = get_default_embedder()
+        result["embedder"] = embedder.name
+        print(f"  Active embedder:       {embedder.name} (dim={embedder.dimension})")
+
+        # Initialize default store
+        store = get_default_store()
+        result["store"] = store.__class__.__name__
+        doc_count = store.count()
+        print(f"  Vector store:          {store.__class__.__name__}")
+        print(f"  Documents loaded:      {doc_count}")
+
+        result["status"] = "ready"
+
+    except Exception as e:
+        print(f"  Error initializing RAG: {e}")
+        result["status"] = f"error: {e}"
+
+    return result
 
 
 def load_configuration() -> None:
@@ -373,6 +421,7 @@ def main():
     # Initialize
     load_configuration()
     initialize_registries()
+    initialize_rag()
 
     # Start server
     start_server(args.host, args.port)

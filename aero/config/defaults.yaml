@@ -18,18 +18,64 @@ server:
 
 # RAG configuration
 rag:
-  store_path: "./data/rag_store"
-  embedding_model: "local"
+  # Storage settings
+  store_backend: "auto"  # auto, duckdb, sqlite, memory
+  store_path: "./data/rag_store.db"
+
+  # Embedding settings
+  embedding_backend: "auto"  # auto, ollama, sentence_transformers, hash
+  embedding_model: "nomic-embed-text"  # For Ollama
+  embedding_model_st: "all-MiniLM-L6-v2"  # For SentenceTransformers
+  embedding_dimension: 384
+
+  # Chunking settings
   chunk_size: 512
-  chunk_overlap: 50
+  chunk_overlap: 102  # ~20% of chunk_size
+  chunk_min_size: 100
+  chunk_respect_sentences: true
+
+  # Search settings
   top_k: 5
+  similarity_threshold: 0.0
+
+  # Preprocessing
+  preprocess:
+    remove_boilerplate: true
+    extract_equations: true
+    fix_hyphens: true
+    normalize_whitespace: true
+
+  # Document ingestion
+  ingestion:
+    max_file_size_mb: 50
+    supported_formats:
+      - ".txt"
+      - ".md"
+      - ".pdf"
+      - ".docx"
+      - ".html"
+      - ".htm"
+      - ".json"
+      - ".yaml"
+      - ".yml"
+      - ".rst"
+      - ".csv"
+    ocr_enabled: true
+    ocr_for_images: true
 
 # OCR configuration
 ocr:
-  default_backend: "tesseract"
+  default_backend: "auto"  # auto, tesseract, deepseek, easyocr
   tesseract_cmd: null  # Auto-detect from PATH
+  tesseract_lang: "eng"
   confidence_threshold: 0.6
   preprocessing: true
+  deepseek:
+    model: "deepseek-vl"
+    host: "http://localhost:11434"
+  easyocr:
+    languages: ["en"]
+    gpu: true
 
 # Simulation configuration
 simulation:
@@ -64,3 +110,8 @@ logging:
   file: null  # Set to path for file logging
   max_bytes: 10485760  # 10MB
   backup_count: 5
+
+# Database configuration (for metadata)
+database:
+  backend: "auto"  # auto, duckdb, sqlite
+  path: "./data/aero_metadata.db"

@@ -362,3 +362,179 @@ def register_simulation(name: str, sim: Any, metadata: Optional[dict] = None) ->
 def register_web_search(name: str, search: Any, metadata: Optional[dict] = None) -> None:
     """Convenience function to register a web search module."""
     get_registry_manager().web_search_modules.register(name, search, metadata)
+
+
+def register_embedder(name: str, embedder: Any, metadata: Optional[dict] = None) -> None:
+    """Convenience function to register an embedder."""
+    get_registry_manager().embedders.register(name, embedder, metadata)
+
+
+def register_agent(name: str, agent: Any, metadata: Optional[dict] = None) -> None:
+    """Convenience function to register an agent."""
+    get_registry_manager().agents.register(name, agent, metadata)
+
+
+# -----------------------------------------------------------------------------
+# RAG Component Registration
+# -----------------------------------------------------------------------------
+
+
+def register_rag_components() -> None:
+    """
+    Register all RAG components with the registry.
+
+    This includes:
+    - Embedders (Ollama, SentenceTransformers, Hash)
+    - Document readers
+    - Vector stores
+    """
+    manager = get_registry_manager()
+
+    # Create RAG-specific registries
+    manager.create_registry("rag_stores")
+    manager.create_registry("rag_readers")
+    manager.create_registry("rag_chunkers")
+    manager.create_registry("rag_preprocessors")
+
+    # Register embedders
+    try:
+        from aero.rag.embedder import (
+            OllamaEmbedder,
+            SentenceTransformerEmbedder,
+            HashEmbedder,
+            AutoEmbedder,
+        )
+
+        manager.embedders.register("ollama", OllamaEmbedder, {
+            "description": "Ollama-based embedder using llama.cpp",
+            "default_model": "nomic-embed-text",
+        })
+        manager.embedders.register("sentence_transformers", SentenceTransformerEmbedder, {
+            "description": "SentenceTransformers embedder",
+            "default_model": "all-MiniLM-L6-v2",
+        })
+        manager.embedders.register("hash", HashEmbedder, {
+            "description": "Hash-based fallback embedder",
+        })
+        manager.embedders.register("auto", AutoEmbedder, {
+            "description": "Auto-selecting embedder",
+        })
+
+        logger.info("Registered RAG embedders")
+
+    except ImportError as e:
+        logger.warning(f"Could not register RAG embedders: {e}")
+
+    # Register vector stores
+    try:
+        from aero.rag.store import (
+            DuckDBVectorStore,
+            SQLiteVectorStore,
+            InMemoryVectorStore,
+        )
+
+        stores = manager.get_registry("rag_stores")
+        stores.register("duckdb", DuckDBVectorStore, {
+            "description": "DuckDB-based vector store",
+        })
+        stores.register("sqlite", SQLiteVectorStore, {
+            "description": "SQLite-based vector store",
+        })
+        stores.register("memory", InMemoryVectorStore, {
+            "description": "In-memory vector store",
+        })
+
+        logger.info("Registered RAG stores")
+
+    except ImportError as e:
+        logger.warning(f"Could not register RAG stores: {e}")
+
+    # Register document readers
+    try:
+        from aero.rag.reader import (
+            TextReader,
+            PDFReader,
+            DocxReader,
+            HTMLReader,
+            ImageReader,
+            DocumentReader,
+        )
+
+        readers = manager.get_registry("rag_readers")
+        readers.register("text", TextReader, {
+            "formats": [".txt", ".md", ".rst", ".csv", ".json", ".yaml"],
+        })
+        readers.register("pdf", PDFReader, {
+            "formats": [".pdf"],
+        })
+        readers.register("docx", DocxReader, {
+            "formats": [".docx"],
+        })
+        readers.register("html", HTMLReader, {
+            "formats": [".html", ".htm"],
+        })
+        readers.register("image", ImageReader, {
+            "formats": [".jpg", ".jpeg", ".png", ".tiff", ".bmp", ".gif"],
+        })
+        readers.register("auto", DocumentReader, {
+            "description": "Auto-selecting document reader",
+        })
+
+        logger.info("Registered RAG readers")
+
+    except ImportError as e:
+        logger.warning(f"Could not register RAG readers: {e}")
+
+
+def get_rag_store(store_type: str = "auto", **kwargs) -> Any:
+    """
+    Get a RAG store instance.
+
+    Args:
+        store_type: Type of store ("duckdb", "sqlite", "memory", "auto")
+        **kwargs: Arguments passed to store constructor
+
+    Returns:
+        Vector store instance
+    """
+    if store_type == "auto":
+        from aero.rag.store import create_vector_store
+        return create_vector_store(**kwargs)
+
+    manager = get_registry_manager()
+    stores = manager.get_registry("rag_stores")
+    store_class = stores.get(store_type)
+    return store_class(**kwargs)
+
+
+def get_embedder(embedder_type: str = "auto", **kwargs) -> Any:
+    """
+    Get an embedder instance.
+
+    Args:
+        embedder_type: Type of embedder ("ollama", "sentence_transformers", "hash", "auto")
+        **kwargs: Arguments passed to embedder constructor
+
+    Returns:
+        Embedder instance
+    """
+    manager = get_registry_manager()
+    embedder_class = manager.embedders.get(embedder_type)
+    return embedder_class(**kwargs)
+
+
+def get_document_reader(reader_type: str = "auto", **kwargs) -> Any:
+    """
+    Get a document reader instance.
+
+    Args:
+        reader_type: Type of reader ("text", "pdf", "docx", "html", "image", "auto")
+        **kwargs: Arguments passed to reader constructor
+
+    Returns:
+        Document reader instance
+    """
+    manager = get_registry_manager()
+    readers = manager.get_registry("rag_readers")
+    reader_class = readers.get(reader_type)
+    return reader_class(**kwargs)
