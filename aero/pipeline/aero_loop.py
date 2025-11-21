@@ -444,6 +444,12 @@ class ScientificReasoningLoop:
         self._constraint_penalty = app_config.get("reasoning.penalty_for_constraint_violation", 0.2)
         self._symbolic_config = app_config.get("symbolic", {})
 
+        # Agent bus support
+        self._agent_bus = None
+        self._notify_on_loop_complete = app_config.get("agents.notify_on_loop_complete", False)
+        self._event_recipient = app_config.get("agents.default_event_recipient", "Congress")
+        self._init_agent_bus()
+
         logger.info("ScientificReasoningLoop initialized")
 
     def _init_surrogates(self) -> None:
@@ -461,6 +467,53 @@ class ScientificReasoningLoop:
         except Exception as e:
             logger.debug(f"Surrogate support not available: {e}")
             self._surrogate_registry = None
+
+    def _init_agent_bus(self) -> None:
+        """Initialize agent bus support if available."""
+        try:
+            from aero.agents.bus import get_default_bus
+            self._agent_bus = get_default_bus()
+            logger.debug("Agent bus support enabled")
+        except Exception as e:
+            logger.debug(f"Agent bus support not available: {e}")
+            self._agent_bus = None
+
+    def _emit_agent_event(
+        self,
+        action: str,
+        payload: dict,
+        recipient: Optional[str] = None,
+    ) -> None:
+        """
+        Emit an event to the agent bus.
+
+        Args:
+            action: Event action name
+            payload: Event payload
+            recipient: Target agent (uses default if not specified)
+        """
+        if self._agent_bus is None:
+            return
+
+        try:
+            from aero.agents.messages import AgentMessage, MESSAGE_KIND_EVENT
+
+            recipient = recipient or self._event_recipient
+
+            msg = AgentMessage.new(
+                sender="Aero",
+                recipient=recipient,
+                kind=MESSAGE_KIND_EVENT,
+                action=action,
+                payload=payload,
+            )
+
+            # Send event (don't wait for response)
+            self._agent_bus.send(msg)
+            logger.debug(f"Emitted agent event: {action} -> {recipient}")
+
+        except Exception as e:
+            logger.warning(f"Failed to emit agent event: {e}")
 
     def maybe_use_surrogate(self, hypothesis, planned_simulation) -> Optional[dict]:
         """
@@ -769,6 +822,20 @@ class ScientificReasoningLoop:
             f"iterations={result.iterations_completed}, "
             f"reason={termination_reason}"
         )
+
+        # Emit loop_completed event if configured
+        if self._notify_on_loop_complete:
+            self._emit_agent_event(
+                action="loop_completed",
+                payload={
+                    "query": query[:200],
+                    "converged": converged,
+                    "iterations": result.iterations_completed,
+                    "termination_reason": termination_reason,
+                    "best_hypothesis": best_hypothesis,
+                    "num_patterns": len(all_patterns),
+                },
+            )
 
         return result
 

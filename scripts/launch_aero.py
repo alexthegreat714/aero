@@ -610,6 +610,99 @@ def initialize_surrogates() -> dict:
     return result
 
 
+def initialize_agents() -> dict:
+    """Initialize the multi-agent system and return status."""
+    print("\n[Initializing Agent System]")
+
+    result = {
+        "bus_enabled": False,
+        "agents_registered": 0,
+        "agent_names": [],
+        "status": "not_initialized",
+    }
+
+    try:
+        from aero.config.loader import get_config
+        config = get_config()
+
+        # Get agent config
+        bus_enabled = config.get("agents.enable_bus", True)
+        log_limit = config.get("agents.log_limit", 1000)
+
+        # Initialize bus and registry
+        from aero.agents.bus import AgentBus, set_default_bus
+        from aero.agents.registry import AgentRegistry, set_default_registry
+
+        bus = AgentBus(enabled=bus_enabled, log_limit=log_limit)
+        set_default_bus(bus)
+
+        registry = AgentRegistry()
+        set_default_registry(registry)
+
+        # Create and register AeroAgent
+        from aero.agents.aero_agent import AeroAgent
+
+        # Get references to other initialized components (if available)
+        loop = None
+        rag_store = None
+        data_store = None
+        surrogate_registry = None
+
+        try:
+            from aero.rag.store import get_default_store as get_rag_store
+            rag_store = get_rag_store()
+        except Exception:
+            pass
+
+        try:
+            from aero.data import get_default_store as get_data_store
+            data_store = get_data_store()
+        except Exception:
+            pass
+
+        try:
+            from aero.surrogate import get_default_registry as get_surrogate_registry
+            surrogate_registry = get_surrogate_registry()
+        except Exception:
+            pass
+
+        # Create AeroAgent
+        aero_agent = AeroAgent(
+            loop=loop,
+            rag_store=rag_store,
+            data_store=data_store,
+            surrogate_registry=surrogate_registry,
+        )
+
+        # Register agent and its handler
+        registry.register(aero_agent)
+        bus.register_handler("Aero", aero_agent.handle_message)
+
+        result["bus_enabled"] = bus_enabled
+        result["agents_registered"] = len(registry)
+        result["agent_names"] = registry.list_agent_names()
+        result["status"] = "ready"
+
+        print(f"  Bus enabled:         {'Yes' if bus_enabled else 'No'}")
+        print(f"  Log limit:           {log_limit}")
+        print(f"  Agents registered:   {len(registry)}")
+        for name in registry.list_agent_names():
+            agent = registry.get(name)
+            caps = agent.get_capabilities() if agent else []
+            print(f"    - {name}: {len(caps)} capabilities")
+
+        print(f"\n  [Aero] Agent bus initialized (agents: {len(registry)})")
+
+    except ImportError as e:
+        print(f"  Agent module not available: {e}")
+        result["status"] = f"not_available: {e}"
+    except Exception as e:
+        print(f"  Error initializing agents: {e}")
+        result["status"] = f"error: {e}"
+
+    return result
+
+
 def load_configuration() -> None:
     """Load configuration."""
     print("\n[Loading Configuration]")
@@ -695,6 +788,7 @@ def main():
     initialize_data_store()
     initialize_surrogates()
     initialize_symbolic()
+    initialize_agents()
 
     # Start server
     start_server(args.host, args.port)

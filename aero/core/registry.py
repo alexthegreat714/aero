@@ -538,3 +538,61 @@ def get_document_reader(reader_type: str = "auto", **kwargs) -> Any:
     readers = manager.get_registry("rag_readers")
     reader_class = readers.get(reader_type)
     return reader_class(**kwargs)
+
+
+# -----------------------------------------------------------------------------
+# Agent Bus and Registry Access
+# -----------------------------------------------------------------------------
+
+
+def get_agent_bus() -> "AgentBus":
+    """
+    Get the global AgentBus instance.
+
+    Returns:
+        AgentBus instance
+    """
+    from aero.agents.bus import get_default_bus
+    return get_default_bus()
+
+
+def get_agent_registry() -> "AgentRegistry":
+    """
+    Get the global AgentRegistry instance.
+
+    Returns:
+        AgentRegistry instance
+    """
+    from aero.agents.registry import get_default_registry
+    return get_default_registry()
+
+
+def initialize_agent_system(
+    bus_enabled: bool = True,
+    log_limit: int = 1000,
+) -> tuple:
+    """
+    Initialize the agent system with bus and registry.
+
+    Args:
+        bus_enabled: Whether the message bus is enabled
+        log_limit: Maximum messages to keep in bus log
+
+    Returns:
+        Tuple of (AgentBus, AgentRegistry)
+    """
+    from aero.agents.bus import AgentBus, set_default_bus
+    from aero.agents.registry import AgentRegistry, set_default_registry
+
+    # Create and set bus
+    bus = AgentBus(enabled=bus_enabled, log_limit=log_limit)
+    set_default_bus(bus)
+
+    # Create and set registry
+    registry = AgentRegistry()
+    set_default_registry(registry)
+
+    logger.info(f"Agent system initialized (bus_enabled={bus_enabled})")
+
+    return bus, registry
+

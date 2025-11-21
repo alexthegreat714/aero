@@ -686,3 +686,197 @@ async def get_dimension(dimension_name: str):
     except Exception as e:
         logger.exception(f"Get dimension error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# Multi-Agent Communication Endpoints
+# =============================================================================
+
+
+class AgentMessageRequest(BaseModel):
+    """Request for sending a message to an agent."""
+
+    sender: str = Field(..., description="Name of the sending agent")
+    recipient: str = Field(default="Aero", description="Name of the receiving agent")
+    kind: str = Field(default="request", description="Message type: 'request', 'response', 'event'")
+    action: str = Field(..., description="Action to perform (e.g., 'health_check', 'hypothesis_loop')")
+    payload: Dict[str, Any] = Field(default_factory=dict, description="Message payload/parameters")
+    correlation_id: Optional[str] = Field(default=None, description="ID to link request/response chains")
+
+
+@router.get("/list")
+async def list_agents():
+    """
+    List all registered agents with their capabilities.
+
+    Returns:
+        List of agent descriptions including name, version, and capabilities.
+    """
+    try:
+        from aero.agents.registry import get_default_registry
+
+        registry = get_default_registry()
+        agents = registry.list_agents()
+
+        return {
+            "status": "ok",
+            "count": len(agents),
+            "agents": agents,
+        }
+
+    except Exception as e:
+        logger.exception(f"List agents error: {e}")
+        return {
+            "status": "error",
+            "message": str(e),
+            "agents": [],
+        }
+
+
+@router.post("/message")
+async def send_agent_message(request: AgentMessageRequest):
+    """
+    Send a message to an agent via the message bus.
+
+    This endpoint allows external agents (Sky, Aegis, Apollo, Congress)
+    to communicate with Aero by sending structured messages.
+
+    Supported actions for Aero:
+    - health_check: Get system health status
+    - hypothesis_loop: Run the scientific reasoning loop
+    - run_simulation: Execute a simulation
+    - rag_search: Search the RAG store
+    - list_surrogates: List available surrogate models
+    - check_constraints: Run constraint validation
+
+    Returns:
+        Message result including status, data, and message metadata.
+    """
+    logger.info(f"Agent message: {request.sender} -> {request.recipient} ({request.action})")
+
+    try:
+        from aero.agents.messages import AgentMessage
+        from aero.agents.bus import get_default_bus
+
+        # Create AgentMessage from request
+        msg = AgentMessage.new(
+            sender=request.sender,
+            recipient=request.recipient,
+            kind=request.kind,
+            action=request.action,
+            payload=request.payload,
+            correlation_id=request.correlation_id,
+        )
+
+        # Send via bus
+        bus = get_default_bus()
+        result = bus.send(msg)
+
+        # Add message info to result
+        result["message_info"] = {
+            "id": msg.id,
+            "sender": msg.sender,
+            "recipient": msg.recipient,
+            "action": msg.action,
+            "created": msg.created,
+        }
+
+        return result
+
+    except Exception as e:
+        logger.exception(f"Agent message error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/messages/log")
+async def get_message_log(limit: int = 100):
+    """
+    Get recent messages from the agent bus log.
+
+    Args:
+        limit: Maximum number of messages to return (default: 100)
+
+    Returns:
+        List of recent message log entries with processing info.
+    """
+    try:
+        from aero.agents.bus import get_default_bus
+
+        bus = get_default_bus()
+        log_entries = bus.get_log_dicts(limit=limit)
+
+        return {
+            "status": "ok",
+            "count": len(log_entries),
+            "limit": limit,
+            "entries": log_entries,
+        }
+
+    except Exception as e:
+        logger.exception(f"Get message log error: {e}")
+        return {
+            "status": "error",
+            "message": str(e),
+            "entries": [],
+        }
+
+
+@router.get("/bus/stats")
+async def get_bus_stats():
+    """
+    Get statistics from the agent message bus.
+
+    Returns:
+        Bus statistics including handler count, log size, and message counts.
+    """
+    try:
+        from aero.agents.bus import get_default_bus
+
+        bus = get_default_bus()
+        stats = bus.get_stats()
+
+        return {
+            "status": "ok",
+            **stats,
+        }
+
+    except Exception as e:
+        logger.exception(f"Get bus stats error: {e}")
+        return {
+            "status": "error",
+            "message": str(e),
+        }
+
+
+@router.get("/capabilities/{agent_name}")
+async def get_agent_capabilities(agent_name: str):
+    """
+    Get capabilities of a specific agent.
+
+    Args:
+        agent_name: Name of the agent
+
+    Returns:
+        Agent description with capabilities.
+    """
+    try:
+        from aero.agents.registry import get_default_registry
+
+        registry = get_default_registry()
+        agent = registry.get(agent_name)
+
+        if agent is None:
+            return {
+                "status": "error",
+                "message": f"Agent not found: {agent_name}",
+                "available_agents": registry.list_agent_names(),
+            }
+
+        return {
+            "status": "ok",
+            **agent.describe(),
+        }
+
+    except Exception as e:
+        logger.exception(f"Get agent capabilities error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

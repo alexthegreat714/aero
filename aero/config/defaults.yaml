@@ -277,3 +277,26 @@ surrogates:
   supported_types:
     - mlp
     - pinn
+
+# Multi-Agent Integration configuration
+agents:
+  # Enable/disable the message bus
+  enable_bus: true
+
+  # Maximum messages to keep in the bus log
+  log_limit: 1000
+
+  # Event notification settings
+  notify_on_loop_complete: false      # Emit event when reasoning loop completes
+  default_event_recipient: "Congress"  # Default recipient for event messages
+
+  # Inter-agent communication settings
+  default_timeout: 30.0               # Default timeout for agent messages (seconds)
+  max_payload_size: 1048576           # Maximum payload size (1MB)
+
+  # Known external agents (for reference)
+  known_agents:
+    - Sky        # Task orchestration agent
+    - Aegis      # Security/monitoring agent
+    - Apollo     # Knowledge/documentation agent
+    - Congress   # Decision-making agent
