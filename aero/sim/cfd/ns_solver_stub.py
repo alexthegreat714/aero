@@ -35,6 +35,232 @@ from aero.sim.base_simulation import BaseSimulation, SimulationConfig, Simulatio
 logger = logging.getLogger(__name__)
 
 
+class NavierStokes2DStub(BaseSimulation):
+    """
+    2D Incompressible Navier-Stokes solver stub.
+
+    This is a placeholder implementation. The purpose is to define
+    the API and data structure that will later hold a real NS solver.
+
+    The projection method (Chorin's method) flow:
+    1. Compute intermediate velocity (ignoring pressure gradient)
+    2. Solve Poisson equation for pressure correction
+    3. Correct velocity field to satisfy continuity
+
+    Governing equations:
+        du/dt + (u·∇)u = -∇p/ρ + ν∇²u    (momentum)
+        ∇·u = 0                            (continuity)
+
+    CFL condition for stability:
+        dt <= min(dx, dy) / max(|u|, |v|)
+
+    Diffusive stability:
+        dt <= min(dx², dy²) / (4ν)
+
+    NOT A FUNCTIONAL SOLVER - outputs zero fields.
+    """
+
+    @property
+    def name(self) -> str:
+        return "navier_stokes_2d_stub"
+
+    def __init__(
+        self,
+        nx: int = 100,
+        ny: int = 100,
+        lx: float = 1.0,
+        ly: float = 1.0,
+        Re: float = 100.0,
+        rho: float = 1.0,
+        config: Optional[SimulationConfig] = None,
+    ):
+        """
+        Initialize the 2D Navier-Stokes stub.
+
+        Args:
+            nx: Grid points in x
+            ny: Grid points in y
+            lx: Domain length in x
+            ly: Domain length in y
+            Re: Reynolds number
+            rho: Density
+            config: Simulation configuration
+        """
+        super().__init__(config)
+
+        self.nx = nx
+        self.ny = ny
+        self.lx = lx
+        self.ly = ly
+        self.Re = Re
+        self.rho = rho
+
+        # Grid spacing
+        self.dx = lx / (nx - 1)
+        self.dy = ly / (ny - 1)
+
+        # Kinematic viscosity
+        self.nu = 1.0 / Re
+
+        # Solution fields (initialized as zeros)
+        self.u: Optional[np.ndarray] = None   # x-velocity
+        self.v: Optional[np.ndarray] = None   # y-velocity
+        self.p: Optional[np.ndarray] = None   # pressure
+
+        # Intermediate velocity
+        self.u_star: Optional[np.ndarray] = None
+        self.v_star: Optional[np.ndarray] = None
+
+        # Time step (calculated for stability)
+        self.dt = self._calculate_stable_dt()
+
+        # Boundary conditions
+        self._bc_config: dict = {}
+
+        logger.info(f"NavierStokes2DStub initialized: {nx}x{ny}, Re={Re}")
+        logger.warning("STUB: No actual CFD computation will be performed")
+
+    def _calculate_stable_dt(self, u_max: float = 1.0, v_max: float = 1.0) -> float:
+        """
+        Calculate stable time step based on CFL and diffusive stability.
+
+        CFL: dt_cfl = CFL * min(dx, dy) / max(|u|, |v|)
+        Diffusive: dt_diff = 0.25 * min(dx², dy²) / ν
+
+        Returns:
+            Stable time step
+        """
+        cfl_number = 0.5
+        vel_max = max(abs(u_max), abs(v_max), 1e-10)
+
+        dt_cfl = cfl_number * min(self.dx, self.dy) / vel_max
+        dt_diff = 0.25 * min(self.dx ** 2, self.dy ** 2) / max(self.nu, 1e-10)
+
+        return min(dt_cfl, dt_diff)
+
+    def setup(self) -> None:
+        """
+        Initialize flow fields to zero.
+
+        In a real solver, this would:
+        - Set up staggered grid
+        - Initialize velocity from IC or restart
+        - Apply boundary conditions
+        """
+        logger.info("Setting up NavierStokes2DStub...")
+
+        # Initialize all fields to zero
+        self.u = np.zeros((self.nx, self.ny))
+        self.v = np.zeros((self.nx, self.ny))
+        self.p = np.zeros((self.nx, self.ny))
+
+        self.u_star = np.zeros_like(self.u)
+        self.v_star = np.zeros_like(self.v)
+
+        logger.info("Setup complete (STUB - all fields are zero)")
+
+    def step(self) -> float:
+        """
+        Execute one time step (STUB).
+
+        Projection method outline:
+        1. Predictor: Compute u*, v* without pressure
+           u* = u + dt * (-(u·∇)u + ν∇²u)
+           v* = v + dt * (-(u·∇)v + ν∇²v)
+
+        2. Pressure Poisson: Solve for pressure correction
+           ∇²p = (ρ/dt) * ∇·u*
+
+        3. Corrector: Update velocity to be divergence-free
+           u = u* - (dt/ρ) * ∂p/∂x
+           v = v* - (dt/ρ) * ∂p/∂y
+
+        Returns:
+            Residual (STUB: returns decreasing fake residual)
+        """
+        # STUB: No actual computation
+        # Return fake decreasing residual
+        residual = 1.0 / (self._iteration + 1)
+        return residual
+
+    def run(self) -> SimulationResult:
+        """
+        Run simulation (STUB).
+
+        Returns placeholder result with zero fields.
+        """
+        logger.warning("NavierStokes2DStub.run() - NO ACTUAL COMPUTATION")
+
+        self.setup()
+
+        return SimulationResult(
+            success=True,
+            data={
+                "u": self.u,
+                "v": self.v,
+                "p": self.p,
+            },
+            iterations=0,
+            residual=0.0,
+            elapsed_time=0.0,
+            metadata={
+                "solver": "navier_stokes_2d_stub",
+                "nx": self.nx,
+                "ny": self.ny,
+                "Re": self.Re,
+                "nu": self.nu,
+                "rho": self.rho,
+                "dx": self.dx,
+                "dy": self.dy,
+                "dt": self.dt,
+                "missing_implementation": [
+                    "Convection term discretization",
+                    "Diffusion term discretization",
+                    "Pressure Poisson solver",
+                    "Boundary condition handling",
+                    "Time integration",
+                ],
+                "warning": "STUB - outputs zero fields",
+            },
+        )
+
+    def set_boundary_conditions(
+        self,
+        inlet: Optional[dict] = None,
+        outlet: Optional[dict] = None,
+        top: Optional[dict] = None,
+        bottom: Optional[dict] = None,
+    ) -> None:
+        """
+        Configure boundary conditions (STUB).
+
+        Supported types (future):
+        - velocity: {"type": "velocity", "u": 1.0, "v": 0.0}
+        - pressure: {"type": "pressure", "p": 0.0}
+        - no_slip: {"type": "no_slip"}
+        - periodic: {"type": "periodic"}
+        """
+        self._bc_config = {
+            "inlet": inlet,
+            "outlet": outlet,
+            "top": top,
+            "bottom": bottom,
+        }
+        logger.debug(f"Boundary conditions configured (STUB)")
+
+    def get_fields(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Get velocity and pressure fields."""
+        if self.u is None:
+            self.setup()
+        return self.u.copy(), self.v.copy(), self.p.copy()
+
+    def get_velocity_magnitude(self) -> np.ndarray:
+        """Get velocity magnitude field."""
+        if self.u is None:
+            self.setup()
+        return np.sqrt(self.u ** 2 + self.v ** 2)
+
+
 class NavierStokesSolver(BaseSimulation):
     """
     Incompressible Navier-Stokes solver (STUB).

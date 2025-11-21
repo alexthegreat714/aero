@@ -80,9 +80,36 @@ ocr:
 # Simulation configuration
 simulation:
   default_solver: "fd"
+  default_grid_size: 64
+  default_dt: 0.001
+  max_steps: 5000
   max_iterations: 10000
   convergence_threshold: 1.0e-6
   device: "auto"  # auto, cpu, cuda
+
+  # PINN configuration
+  pinn:
+    layers: [2, 64, 64, 64, 1]
+    lr: 0.001
+    epochs: 5000
+    activation: "tanh"
+    lambda_physics: 1.0
+    lambda_bc: 10.0
+
+  # CFD configuration
+  cfd:
+    viscosity: 0.01
+    density: 1.0
+    cfl_number: 0.5
+
+  # Heat equation
+  heat:
+    alpha: 0.01
+    default_dt: 0.0001
+
+  # Laplace equation
+  laplace:
+    omega: 1.0  # SOR relaxation (1.0 = Gauss-Seidel)
 
 # Web search configuration
 web:

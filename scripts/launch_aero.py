@@ -342,6 +342,51 @@ def initialize_rag() -> dict:
     return result
 
 
+def initialize_simulation() -> dict:
+    """Initialize simulation system and return status."""
+    print("\n[Initializing Simulation Engine]")
+
+    result = {
+        "scheduler": None,
+        "pytorch": False,
+        "cuda": False,
+        "cuda_device": None,
+        "numerics_backend": "numpy",
+    }
+
+    try:
+        # Initialize scheduler
+        from aero.sim.scheduler import get_scheduler
+        scheduler = get_scheduler()
+        result["scheduler"] = "ready"
+        print(f"  Scheduler:            Initialized")
+
+        # Check PyTorch and CUDA
+        try:
+            from aero.sim.pinn.pinn_trainer import check_pytorch_cuda
+            cuda_info = check_pytorch_cuda()
+
+            result["pytorch"] = cuda_info["pytorch_available"]
+            result["cuda"] = cuda_info["cuda_available"]
+            result["cuda_device"] = cuda_info.get("cuda_device")
+
+            print(f"  PyTorch:              {'Yes' if result['pytorch'] else 'No'}")
+            print(f"  CUDA available:       {'Yes' if result['cuda'] else 'No'}")
+            if result["cuda_device"]:
+                print(f"  CUDA device:          {result['cuda_device']}")
+        except ImportError:
+            print(f"  PyTorch:              Not installed")
+
+        print(f"  Numerics backend:     numpy (CPU)")
+        print(f"  Available solvers:    heat_1d, laplace_2d, ns_stub, pinn")
+
+    except Exception as e:
+        print(f"  Error initializing simulation: {e}")
+        result["error"] = str(e)
+
+    return result
+
+
 def load_configuration() -> None:
     """Load configuration."""
     print("\n[Loading Configuration]")
@@ -421,6 +466,7 @@ def main():
     # Initialize
     load_configuration()
     initialize_registries()
+    initialize_simulation()
     initialize_rag()
 
     # Start server

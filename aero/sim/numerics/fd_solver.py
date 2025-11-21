@@ -1,17 +1,220 @@
 """
 Finite Difference solvers for Aero Agent.
 
-Provides basic FD implementations for common PDEs.
+Provides basic FD implementations for common PDEs:
+- 1D Heat equation (explicit time-stepping)
+- 2D Laplace equation (Gauss-Seidel iteration)
+
+Both class-based solvers and standalone functions are provided.
 """
 
 import logging
-from typing import Callable, Optional
+from typing import Callable, Optional, Tuple
 
 import numpy as np
 
 from aero.sim.base_simulation import BaseSimulation, SimulationConfig, SimulationResult
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Standalone Solver Functions
+# =============================================================================
+
+
+def solve_heat_1d(
+    u0: np.ndarray,
+    alpha: float,
+    dx: float,
+    dt: float,
+    steps: int,
+    boundary_left: Optional[float] = None,
+    boundary_right: Optional[float] = None,
+) -> Tuple[np.ndarray, dict]:
+    """
+    Solve 1D heat equation using explicit finite difference.
+
+    Solves: du/dt = alpha * d²u/dx²
+
+    Uses forward Euler time stepping with central difference for spatial derivative.
+    Stability requires: alpha * dt / dx² <= 0.5
+
+    Args:
+        u0: Initial temperature distribution (1D array)
+        alpha: Thermal diffusivity
+        dx: Grid spacing
+        dt: Time step
+        steps: Number of time steps to take
+
+    Returns:
+        Tuple of (final_u, metadata_dict)
+
+    Example:
+        # Create initial condition with hot spot in center
+        x = np.linspace(0, 1, 101)
+        u0 = np.exp(-100 * (x - 0.5)**2)
+
+        # Solve for 1000 steps
+        u_final, info = solve_heat_1d(u0, alpha=0.01, dx=0.01, dt=0.0001, steps=1000)
+    """
+    # Check stability
+    r = alpha * dt / (dx * dx)
+    if r > 0.5:
+        logger.warning(f"Heat equation may be unstable: r = {r:.4f} > 0.5")
+
+    # Initialize
+    nx = len(u0)
+    u = u0.copy()
+    u_new = np.zeros_like(u)
+
+    # Apply boundary conditions if specified
+    if boundary_left is not None:
+        u[0] = boundary_left
+    if boundary_right is not None:
+        u[-1] = boundary_right
+
+    # Time stepping
+    for step in range(steps):
+        # Interior points using explicit scheme
+        for i in range(1, nx - 1):
+            u_new[i] = u[i] + r * (u[i + 1] - 2 * u[i] + u[i - 1])
+
+        # Boundary conditions
+        if boundary_left is not None:
+            u_new[0] = boundary_left
+        else:
+            u_new[0] = u[0]  # Keep initial
+
+        if boundary_right is not None:
+            u_new[-1] = boundary_right
+        else:
+            u_new[-1] = u[-1]  # Keep initial
+
+        # Swap arrays
+        u, u_new = u_new, u
+
+    # Metadata
+    metadata = {
+        "solver": "heat_1d_explicit",
+        "nx": nx,
+        "dx": dx,
+        "dt": dt,
+        "alpha": alpha,
+        "r": r,
+        "steps": steps,
+        "final_time": steps * dt,
+        "stable": r <= 0.5,
+    }
+
+    logger.info(f"Heat 1D solved: {steps} steps, r={r:.4f}, time={steps*dt:.4f}")
+
+    return u, metadata
+
+
+def solve_laplace_2d(
+    initial_grid: np.ndarray,
+    tol: float = 1e-6,
+    max_iterations: int = 10000,
+    omega: float = 1.0,
+) -> Tuple[np.ndarray, dict]:
+    """
+    Solve 2D Laplace equation using Gauss-Seidel iteration.
+
+    Solves: d²u/dx² + d²u/dy² = 0
+
+    Boundary conditions are taken from the edges of initial_grid.
+    Uses successive over-relaxation (SOR) if omega > 1.
+
+    Args:
+        initial_grid: 2D array with boundary values set, interior can be any guess
+        tol: Convergence tolerance (max change between iterations)
+        max_iterations: Maximum number of iterations
+        omega: Relaxation factor (1.0 = Gauss-Seidel, >1 = SOR, <1 = under-relaxation)
+
+    Returns:
+        Tuple of (solution_grid, metadata_dict)
+
+    Example:
+        # Create grid with boundary conditions
+        u = np.zeros((50, 50))
+        u[0, :] = 100   # Top boundary = 100
+        u[-1, :] = 0    # Bottom = 0
+        u[:, 0] = 50    # Left = 50
+        u[:, -1] = 50   # Right = 50
+
+        # Solve
+        solution, info = solve_laplace_2d(u, tol=1e-6)
+        print(f"Converged in {info['iterations']} iterations")
+    """
+    nx, ny = initial_grid.shape
+    u = initial_grid.copy()
+
+    # Store boundary values
+    bc_left = u[0, :].copy()
+    bc_right = u[-1, :].copy()
+    bc_bottom = u[:, 0].copy()
+    bc_top = u[:, -1].copy()
+
+    converged = False
+    iterations = 0
+    final_residual = float('inf')
+
+    for iteration in range(max_iterations):
+        max_change = 0.0
+
+        # Gauss-Seidel iteration over interior points
+        for i in range(1, nx - 1):
+            for j in range(1, ny - 1):
+                # Standard 5-point stencil average
+                u_gs = 0.25 * (u[i + 1, j] + u[i - 1, j] + u[i, j + 1] + u[i, j - 1])
+
+                # SOR update
+                u_new = omega * u_gs + (1 - omega) * u[i, j]
+
+                # Track convergence
+                change = abs(u_new - u[i, j])
+                if change > max_change:
+                    max_change = change
+
+                u[i, j] = u_new
+
+        # Enforce boundary conditions
+        u[0, :] = bc_left
+        u[-1, :] = bc_right
+        u[:, 0] = bc_bottom
+        u[:, -1] = bc_top
+
+        iterations = iteration + 1
+        final_residual = max_change
+
+        if max_change < tol:
+            converged = True
+            break
+
+    # Metadata
+    metadata = {
+        "solver": "laplace_2d_gauss_seidel",
+        "nx": nx,
+        "ny": ny,
+        "iterations": iterations,
+        "final_residual": final_residual,
+        "converged": converged,
+        "tolerance": tol,
+        "omega": omega,
+    }
+
+    if converged:
+        logger.info(f"Laplace 2D converged in {iterations} iterations, residual={final_residual:.2e}")
+    else:
+        logger.warning(f"Laplace 2D did not converge after {iterations} iterations, residual={final_residual:.2e}")
+
+    return u, metadata
+
+
+# =============================================================================
+# Class-Based Solvers
+# =============================================================================
 
 
 class FDSolver(BaseSimulation):
