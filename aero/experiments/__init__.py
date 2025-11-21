@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
+from uuid import uuid4
 import json
 
 from aero.experiments.camera import (
@@ -68,12 +69,14 @@ class ExperimentResult:
     Unified result container for all experiment types.
 
     Attributes:
+        id: Unique identifier for the result (UUID)
         experiment_type: Type of experiment performed
         data: Primary result data (numpy arrays, values, etc.)
         metadata: Additional information about the experiment
         timestamp: When the experiment was performed
         success: Whether the experiment completed successfully
         error: Error message if experiment failed
+        tags: List of tags for categorization
     """
 
     experiment_type: str
@@ -82,6 +85,8 @@ class ExperimentResult:
     timestamp: datetime = field(default_factory=datetime.now)
     success: bool = True
     error: Optional[str] = None
+    tags: List[str] = field(default_factory=list)
+    id: str = field(default_factory=lambda: str(uuid4()))
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary (JSON-serializable)."""
@@ -96,11 +101,34 @@ class ExperimentResult:
                 data_serializable[key] = value
 
         return {
+            "id": self.id,
             "experiment_type": self.experiment_type,
             "data": data_serializable,
             "metadata": self.metadata,
             "timestamp": self.timestamp.isoformat(),
             "success": self.success,
+            "error": self.error,
+            "tags": self.tags,
+        }
+
+    def to_record(self) -> Dict[str, Any]:
+        """
+        Convert to a record suitable for database storage.
+
+        Returns:
+            Dictionary with id, type, config, metadata, status, tags, data
+        """
+        return {
+            "id": self.id,
+            "type": self.experiment_type,
+            "config": self.metadata.get("config", {}),
+            "metadata": {
+                k: v for k, v in self.metadata.items()
+                if k != "config"
+            },
+            "status": "completed" if self.success else "failed",
+            "tags": self.tags,
+            "data": self.data,
             "error": self.error,
         }
 
@@ -117,14 +145,19 @@ class ExperimentResult:
         elif timestamp is None:
             timestamp = datetime.now()
 
-        return cls(
+        result = cls(
             experiment_type=d.get("experiment_type", "unknown"),
             data=d.get("data", {}),
             metadata=d.get("metadata", {}),
             timestamp=timestamp,
             success=d.get("success", True),
             error=d.get("error"),
+            tags=d.get("tags", []),
         )
+        # Preserve ID if present
+        if "id" in d:
+            result.id = d["id"]
+        return result
 
     @classmethod
     def failure(cls, experiment_type: str, error: str) -> "ExperimentResult":

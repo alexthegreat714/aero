@@ -211,3 +211,22 @@ logging:
 database:
   backend: "auto"  # auto, duckdb, sqlite
   path: "./data/aero_metadata.db"
+
+# Data Lake configuration
+data:
+  # Storage backend: duckdb (preferred) or sqlite (fallback)
+  backend: "auto"  # auto, duckdb, sqlite
+
+  # Database path for simulation/experiment records
+  db_path: "./data/aero.db"
+
+  # Directory for storing large field arrays as .npz files
+  fields_dir: "./data/fields"
+
+  # Auto-persist settings
+  auto_persist_simulations: true
+  auto_persist_experiments: true
+
+  # Cleanup settings
+  max_records_per_type: 1000  # Max records before cleanup warning
+  cleanup_after_days: 90     # Auto-cleanup records older than this

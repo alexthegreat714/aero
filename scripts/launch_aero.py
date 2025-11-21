@@ -449,6 +449,55 @@ def initialize_experiments() -> dict:
     return result
 
 
+def initialize_data_store() -> dict:
+    """Initialize the data lake and return status."""
+    print("\n[Initializing Data Lake]")
+
+    result = {
+        "backend": None,
+        "db_path": None,
+        "fields_dir": None,
+        "status": "not_initialized",
+    }
+
+    try:
+        from aero.data import DataStore, get_default_store, set_default_store, DUCKDB_AVAILABLE
+
+        # Get config
+        from aero.config.loader import get_config
+        config = get_config()
+
+        db_path = config.get("data.db_path", "./data/aero.db")
+        fields_dir = config.get("data.fields_dir", "./data/fields")
+
+        # Initialize store
+        store = DataStore(db_path=db_path, fields_dir=fields_dir)
+        set_default_store(store)
+
+        # Get stats
+        stats = store.get_stats()
+
+        result["backend"] = "DuckDB" if DUCKDB_AVAILABLE else "SQLite"
+        result["db_path"] = db_path
+        result["fields_dir"] = fields_dir
+        result["status"] = "ready"
+        result["stats"] = stats
+
+        print(f"  Backend:             {result['backend']}")
+        print(f"  Database path:       {db_path}")
+        print(f"  Fields directory:    {fields_dir}")
+        print(f"  Simulations stored:  {stats.get('simulations', 0)}")
+        print(f"  Experiments stored:  {stats.get('experiments', 0)}")
+        print(f"  Timeseries records:  {stats.get('timeseries', 0)}")
+        print(f"  Field arrays:        {stats.get('fields', 0)}")
+
+    except Exception as e:
+        print(f"  Error initializing data lake: {e}")
+        result["status"] = f"error: {e}"
+
+    return result
+
+
 def load_configuration() -> None:
     """Load configuration."""
     print("\n[Loading Configuration]")
@@ -531,6 +580,7 @@ def main():
     initialize_simulation()
     initialize_rag()
     initialize_experiments()
+    initialize_data_store()
 
     # Start server
     start_server(args.host, args.port)

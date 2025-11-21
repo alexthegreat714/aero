@@ -9,7 +9,8 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, List, Optional, Union
+from uuid import uuid4
 
 import numpy as np
 
@@ -49,8 +50,10 @@ class SimulationResult:
     Container for simulation results.
 
     Stores:
+    - id: Unique identifier for the result (UUID)
     - fields: Dictionary of output arrays (velocity, pressure, temperature, etc.)
     - metadata: Information about the simulation run
+    - tags: List of tags for categorization
 
     Example:
         result = SimulationResult(
@@ -63,6 +66,8 @@ class SimulationResult:
 
     fields: Dict[str, Any] = field(default_factory=dict)
     metadata: Dict[str, Any] = field(default_factory=dict)
+    tags: List[str] = field(default_factory=list)
+    id: str = field(default_factory=lambda: str(uuid4()))
 
     def __post_init__(self):
         """Validate fields."""
@@ -70,6 +75,10 @@ class SimulationResult:
             self.fields = {}
         if self.metadata is None:
             self.metadata = {}
+        if self.tags is None:
+            self.tags = []
+        if not self.id:
+            self.id = str(uuid4())
 
     def to_json(self, indent: int = 2) -> str:
         """
@@ -82,10 +91,32 @@ class SimulationResult:
             JSON string representation
         """
         data = {
+            "id": self.id,
             "fields": self.fields,
             "metadata": self.metadata,
+            "tags": self.tags,
         }
         return json.dumps(data, cls=NumpyEncoder, indent=indent)
+
+    def to_record(self) -> Dict[str, Any]:
+        """
+        Convert to a record suitable for database storage.
+
+        Returns:
+            Dictionary with id, type, config, metadata, status, tags
+        """
+        return {
+            "id": self.id,
+            "type": self.metadata.get("simulation_type", "unknown"),
+            "config": self.metadata.get("config", {}),
+            "metadata": {
+                k: v for k, v in self.metadata.items()
+                if k not in ("config", "simulation_type")
+            },
+            "status": self.metadata.get("status", "completed"),
+            "tags": self.tags,
+            "fields": self.fields,
+        }
 
     @classmethod
     def from_json(cls, json_str: str) -> "SimulationResult":
@@ -99,10 +130,15 @@ class SimulationResult:
             SimulationResult instance
         """
         data = json.loads(json_str, object_hook=numpy_decoder)
-        return cls(
+        result = cls(
             fields=data.get("fields", {}),
             metadata=data.get("metadata", {}),
+            tags=data.get("tags", []),
         )
+        # Preserve ID if present
+        if "id" in data:
+            result.id = data["id"]
+        return result
 
     def save(self, path: Union[str, Path], format: str = "auto") -> None:
         """
@@ -234,11 +270,15 @@ class SimulationResult:
         """Get a summary string of the result."""
         lines = [
             f"SimulationResult:",
+            f"  ID: {self.id[:8]}...",
             f"  Status: {self.metadata.get('status', 'unknown')}",
             f"  Type: {self.metadata.get('simulation_type', 'unknown')}",
             f"  Runtime: {self.runtime:.3f}s" if self.runtime else "  Runtime: N/A",
             f"  Fields: {', '.join(self.field_names) or 'none'}",
         ]
+
+        if self.tags:
+            lines.append(f"  Tags: {', '.join(self.tags)}")
 
         if self.error:
             lines.append(f"  Error: {self.error}")
@@ -251,4 +291,4 @@ class SimulationResult:
         return "\n".join(lines)
 
     def __repr__(self) -> str:
-        return f"SimulationResult(fields={self.field_names}, status={self.metadata.get('status')})"
+        return f"SimulationResult(id={self.id[:8]}..., fields={self.field_names}, status={self.metadata.get('status')})"

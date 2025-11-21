@@ -20,6 +20,13 @@ import numpy as np
 from aero.config.loader import get_config
 from aero.core.events import EventBus, Event
 
+# Data Lake imports (optional)
+try:
+    from aero.data import get_default_store, DataStore
+    DATA_LAKE_AVAILABLE = True
+except ImportError:
+    DATA_LAKE_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -368,6 +375,8 @@ class ScientificReasoningLoop:
         rag=None,
         scheduler=None,
         ocr_registry=None,
+        data_store: Optional["DataStore"] = None,
+        auto_persist: bool = True,
     ):
         """
         Initialize the scientific reasoning loop.
@@ -377,11 +386,22 @@ class ScientificReasoningLoop:
             rag: RAG store for context retrieval
             scheduler: Simulation scheduler
             ocr_registry: OCR backend registry
+            data_store: DataStore for persisting results (optional)
+            auto_persist: Whether to auto-persist simulation/experiment results
         """
         self.config = config or LoopConfig()
         self.rag = rag
         self.scheduler = scheduler
         self.ocr_registry = ocr_registry
+        self.auto_persist = auto_persist
+
+        # Initialize data store
+        self._data_store = data_store
+        if self._data_store is None and DATA_LAKE_AVAILABLE and auto_persist:
+            try:
+                self._data_store = get_default_store()
+            except Exception as e:
+                logger.warning(f"Could not get default data store: {e}")
 
         # Import components
         from aero.pipeline.hypothesis import Hypothesis, generate_initial_hypotheses, generate_secondary_hypotheses
@@ -455,12 +475,24 @@ class ScientificReasoningLoop:
 
             # Step 3: Execute simulations
             simulation_results = []
-            for sim_config in all_sim_configs:
+            for i, sim_config in enumerate(all_sim_configs):
                 result = self._run_simulation(sim_config)
                 simulation_results.append(result)
+
+                # Get associated hypothesis ID if available
+                hypothesis_id = None
+                if i < len(hypotheses):
+                    hypothesis_id = hypotheses[i].id if hasattr(hypotheses[i], 'id') else None
+
+                # Auto-persist simulation result
+                stored_id = self._persist_simulation_result(sim_config, result, hypothesis_id)
+                if stored_id:
+                    result["stored_id"] = stored_id
+
                 iteration_result["simulations"].append({
                     "config": sim_config.to_dict(),
                     "result": result,
+                    "stored_id": stored_id,
                 })
 
             logger.info(f"Executed {len(simulation_results)} simulations")
@@ -784,6 +816,105 @@ class ScientificReasoningLoop:
         self._iteration_history = []
         logger.info("Loop state reset")
 
+    def _persist_simulation_result(
+        self,
+        sim_config,
+        result: dict,
+        hypothesis_id: Optional[str] = None,
+    ) -> Optional[str]:
+        """
+        Persist simulation result to the data lake.
+
+        Args:
+            sim_config: Simulation configuration
+            result: Simulation result dictionary
+            hypothesis_id: Associated hypothesis ID
+
+        Returns:
+            Stored record ID, or None if persistence failed
+        """
+        if not self.auto_persist or not self._data_store:
+            return None
+
+        try:
+            from aero.sim.results import SimulationResult
+
+            # Build metadata
+            metadata = {
+                "simulation_type": str(sim_config.sim_type.value) if hasattr(sim_config.sim_type, 'value') else str(sim_config.sim_type),
+                "config": sim_config.to_dict(),
+                "status": "completed" if result.get("converged") else "failed",
+                "runtime_seconds": result.get("metadata", {}).get("runtime_seconds"),
+            }
+
+            # Extract fields
+            fields = {}
+            if result.get("solution") is not None:
+                sol = result["solution"]
+                if isinstance(sol, list):
+                    sol = np.array(sol)
+                fields["solution"] = sol
+
+            # Create SimulationResult
+            sim_result = SimulationResult(
+                fields=fields,
+                metadata=metadata,
+                tags=["aero_loop", "auto_persist"],
+            )
+
+            # Save to data store
+            record_id = self._data_store.save_simulation_result(
+                sim_result,
+                hypothesis_id=hypothesis_id,
+            )
+
+            logger.debug(f"Persisted simulation result: {record_id[:8]}...")
+            return record_id
+
+        except Exception as e:
+            logger.warning(f"Failed to persist simulation result: {e}")
+            return None
+
+    def _persist_experiment_result(
+        self,
+        exp_config,
+        result: dict,
+        hypothesis_id: Optional[str] = None,
+    ) -> Optional[str]:
+        """
+        Persist experiment result to the data lake.
+
+        Args:
+            exp_config: Experiment configuration
+            result: Experiment result dictionary
+            hypothesis_id: Associated hypothesis ID
+
+        Returns:
+            Stored record ID, or None if persistence failed
+        """
+        if not self.auto_persist or not self._data_store:
+            return None
+
+        try:
+            from aero.experiments import ExperimentResult
+
+            # Create ExperimentResult from dict
+            exp_result = ExperimentResult.from_dict(result)
+            exp_result.tags = ["aero_loop", "auto_persist"]
+
+            # Save to data store
+            record_id = self._data_store.save_experiment_result(
+                exp_result,
+                hypothesis_id=hypothesis_id,
+            )
+
+            logger.debug(f"Persisted experiment result: {record_id[:8]}...")
+            return record_id
+
+        except Exception as e:
+            logger.warning(f"Failed to persist experiment result: {e}")
+            return None
+
     def run_experiment(self, experiment_config) -> dict:
         """
         Execute an experiment using the configured experiment system.
@@ -815,7 +946,15 @@ class ScientificReasoningLoop:
 
         try:
             result = self._execute_experiment(experiment_config)
-            return result.to_dict()
+            result_dict = result.to_dict()
+
+            # Auto-persist experiment result
+            hypothesis_id = experiment_config.hypothesis_id if hasattr(experiment_config, 'hypothesis_id') else None
+            stored_id = self._persist_experiment_result(experiment_config, result_dict, hypothesis_id)
+            if stored_id:
+                result_dict["stored_id"] = stored_id
+
+            return result_dict
         except Exception as e:
             logger.error(f"Experiment execution error: {e}")
             return {
