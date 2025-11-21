@@ -1,0 +1,748 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aero - Aerodynamics Research Agent</title>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: #0a0a0f;
+            color: #e0e0e0;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .container {
+            display: grid;
+            grid-template-columns: 1fr 350px;
+            grid-template-rows: auto 1fr;
+            height: 100vh;
+            gap: 10px;
+            padding: 10px;
+        }
+
+        header {
+            grid-column: 1 / -1;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            padding: 15px 20px;
+            border-radius: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        header h1 {
+            font-size: 1.5rem;
+            color: #00d4ff;
+        }
+
+        .status {
+            display: flex;
+            gap: 15px;
+            font-size: 0.85rem;
+        }
+
+        .status-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #4caf50;
+        }
+
+        .status-dot.offline {
+            background: #f44336;
+        }
+
+        .main-area {
+            display: grid;
+            grid-template-rows: 1fr 300px;
+            gap: 10px;
+        }
+
+        .chat-section {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+
+        .chat-panel {
+            background: #12121a;
+            border-radius: 10px;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .panel-header {
+            padding: 12px 15px;
+            background: #1a1a2e;
+            border-bottom: 1px solid #2a2a3e;
+            font-weight: 600;
+            font-size: 0.9rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .panel-header .model-tag {
+            font-size: 0.75rem;
+            padding: 3px 8px;
+            background: #2a2a3e;
+            border-radius: 4px;
+            color: #888;
+        }
+
+        .messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 15px;
+        }
+
+        .message {
+            margin-bottom: 15px;
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .message.user {
+            text-align: right;
+        }
+
+        .message-content {
+            display: inline-block;
+            max-width: 85%;
+            padding: 10px 14px;
+            border-radius: 12px;
+            font-size: 0.9rem;
+            line-height: 1.5;
+        }
+
+        .message.user .message-content {
+            background: #0066cc;
+            color: white;
+        }
+
+        .message.assistant .message-content {
+            background: #2a2a3e;
+        }
+
+        .message.reasoning .message-content {
+            background: #1a2a1a;
+            border-left: 3px solid #4caf50;
+            font-family: 'Monaco', 'Consolas', monospace;
+            font-size: 0.85rem;
+            white-space: pre-wrap;
+        }
+
+        .reasoning-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            background: #1a2a1a;
+            border-radius: 8px;
+            font-size: 0.8rem;
+            color: #4caf50;
+            margin-bottom: 10px;
+        }
+
+        .reasoning-indicator .spinner {
+            width: 12px;
+            height: 12px;
+            border: 2px solid #4caf50;
+            border-top-color: transparent;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .input-area {
+            padding: 15px;
+            background: #1a1a2e;
+            border-top: 1px solid #2a2a3e;
+        }
+
+        .input-wrapper {
+            display: flex;
+            gap: 10px;
+        }
+
+        #message-input {
+            flex: 1;
+            padding: 12px 15px;
+            background: #0a0a0f;
+            border: 1px solid #2a2a3e;
+            border-radius: 8px;
+            color: white;
+            font-size: 0.95rem;
+            outline: none;
+        }
+
+        #message-input:focus {
+            border-color: #00d4ff;
+        }
+
+        button {
+            padding: 12px 20px;
+            background: #0066cc;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 500;
+            transition: background 0.2s;
+        }
+
+        button:hover {
+            background: #0077ee;
+        }
+
+        button:disabled {
+            background: #333;
+            cursor: not-allowed;
+        }
+
+        .graph-section {
+            background: #12121a;
+            border-radius: 10px;
+            padding: 15px;
+        }
+
+        .graph-section h3 {
+            font-size: 0.9rem;
+            margin-bottom: 10px;
+            color: #888;
+        }
+
+        #graph-container {
+            height: calc(100% - 30px);
+            background: #0a0a0f;
+            border-radius: 8px;
+        }
+
+        .sidebar {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .references-panel {
+            flex: 1;
+            background: #12121a;
+            border-radius: 10px;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .references-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 15px;
+        }
+
+        .reference-item {
+            padding: 12px;
+            background: #1a1a2e;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            font-size: 0.85rem;
+        }
+
+        .reference-item .score {
+            font-size: 0.75rem;
+            color: #00d4ff;
+            margin-bottom: 5px;
+        }
+
+        .reference-item .content {
+            color: #aaa;
+            line-height: 1.4;
+        }
+
+        .controls-panel {
+            background: #12121a;
+            border-radius: 10px;
+            padding: 15px;
+        }
+
+        .controls-panel h3 {
+            font-size: 0.9rem;
+            margin-bottom: 10px;
+            color: #888;
+        }
+
+        .control-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .control-row label {
+            font-size: 0.85rem;
+        }
+
+        .toggle {
+            width: 40px;
+            height: 20px;
+            background: #333;
+            border-radius: 10px;
+            cursor: pointer;
+            position: relative;
+        }
+
+        .toggle.active {
+            background: #0066cc;
+        }
+
+        .toggle::after {
+            content: '';
+            position: absolute;
+            width: 16px;
+            height: 16px;
+            background: white;
+            border-radius: 50%;
+            top: 2px;
+            left: 2px;
+            transition: left 0.2s;
+        }
+
+        .toggle.active::after {
+            left: 22px;
+        }
+
+        .btn-secondary {
+            background: #333;
+            width: 100%;
+            margin-top: 10px;
+        }
+
+        .btn-secondary:hover {
+            background: #444;
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #0a0a0f;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #333;
+            border-radius: 3px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #444;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>AERO - Aerodynamics Research Agent</h1>
+            <div class="status">
+                <div class="status-item">
+                    <div class="status-dot" id="ollama-status"></div>
+                    <span>Ollama</span>
+                </div>
+                <div class="status-item">
+                    <div class="status-dot" id="gemma-status"></div>
+                    <span>Gemma 3</span>
+                </div>
+                <div class="status-item">
+                    <div class="status-dot" id="deepcoder-status"></div>
+                    <span>DeepCoder</span>
+                </div>
+            </div>
+        </header>
+
+        <div class="main-area">
+            <div class="chat-section">
+                <!-- Gemma 3 Chat Panel -->
+                <div class="chat-panel">
+                    <div class="panel-header">
+                        <span>Chat with Aero</span>
+                        <span class="model-tag">Gemma 3</span>
+                    </div>
+                    <div class="messages" id="chat-messages"></div>
+                    <div class="input-area">
+                        <div class="input-wrapper">
+                            <input type="text" id="message-input" placeholder="Ask Aero about aerodynamics..." />
+                            <button id="send-btn">Send</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- DeepCoder Reasoning Panel -->
+                <div class="chat-panel">
+                    <div class="panel-header">
+                        <span>Deep Reasoning</span>
+                        <span class="model-tag">DeepCoder</span>
+                    </div>
+                    <div class="messages" id="reasoning-messages">
+                        <div class="message assistant">
+                            <div class="message-content" style="color: #666; font-style: italic;">
+                                Deep reasoning will appear here when complex analysis is needed...
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Graph Section -->
+            <div class="graph-section">
+                <h3>Simulation Output</h3>
+                <div id="graph-container"></div>
+            </div>
+        </div>
+
+        <div class="sidebar">
+            <!-- References Panel -->
+            <div class="references-panel">
+                <div class="panel-header">
+                    <span>References</span>
+                    <span class="model-tag">RAG</span>
+                </div>
+                <div class="references-list" id="references-list">
+                    <div class="reference-item" style="color: #666; font-style: italic;">
+                        Relevant documents will appear here...
+                    </div>
+                </div>
+            </div>
+
+            <!-- Controls Panel -->
+            <div class="controls-panel">
+                <h3>Settings</h3>
+                <div class="control-row">
+                    <label>Include RAG</label>
+                    <div class="toggle active" id="rag-toggle" onclick="toggleRAG()"></div>
+                </div>
+                <div class="control-row">
+                    <label>Stream Response</label>
+                    <div class="toggle active" id="stream-toggle" onclick="toggleStream()"></div>
+                </div>
+                <button class="btn-secondary" onclick="clearChat()">Clear Chat</button>
+                <button class="btn-secondary" onclick="runDemo()">Demo Simulation</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // State
+        let includeRAG = true;
+        let streamEnabled = true;
+        let isProcessing = false;
+
+        // Elements
+        const chatMessages = document.getElementById('chat-messages');
+        const reasoningMessages = document.getElementById('reasoning-messages');
+        const referencesList = document.getElementById('references-list');
+        const messageInput = document.getElementById('message-input');
+        const sendBtn = document.getElementById('send-btn');
+        const graphContainer = document.getElementById('graph-container');
+
+        // Check status on load
+        checkStatus();
+
+        // Event listeners
+        messageInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && !isProcessing) sendMessage();
+        });
+        sendBtn.addEventListener('click', sendMessage);
+
+        async function checkStatus() {
+            try {
+                const resp = await fetch('/api/status');
+                const data = await resp.json();
+
+                document.getElementById('ollama-status').classList.toggle('offline', !data.ollama_available);
+
+                const models = data.models || [];
+                const hasGemma = models.some(m => m.includes('gemma'));
+                const hasDeepCoder = models.some(m => m.includes('deep'));
+
+                document.getElementById('gemma-status').classList.toggle('offline', !hasGemma);
+                document.getElementById('deepcoder-status').classList.toggle('offline', !hasDeepCoder);
+            } catch (e) {
+                console.error('Status check failed:', e);
+            }
+        }
+
+        function addMessage(container, content, type = 'assistant') {
+            const msg = document.createElement('div');
+            msg.className = `message ${type}`;
+            msg.innerHTML = `<div class="message-content">${escapeHtml(content)}</div>`;
+            container.appendChild(msg);
+            container.scrollTop = container.scrollHeight;
+            return msg;
+        }
+
+        function updateMessage(msgEl, content) {
+            msgEl.querySelector('.message-content').textContent = content;
+            msgEl.parentElement.scrollTop = msgEl.parentElement.scrollHeight;
+        }
+
+        function addReasoningIndicator() {
+            const indicator = document.createElement('div');
+            indicator.className = 'reasoning-indicator';
+            indicator.id = 'reasoning-indicator';
+            indicator.innerHTML = '<div class="spinner"></div><span>DeepCoder is analyzing...</span>';
+            reasoningMessages.appendChild(indicator);
+            reasoningMessages.scrollTop = reasoningMessages.scrollHeight;
+            return indicator;
+        }
+
+        function removeReasoningIndicator() {
+            const indicator = document.getElementById('reasoning-indicator');
+            if (indicator) indicator.remove();
+        }
+
+        function updateReferences(refs) {
+            if (!refs || refs.length === 0) {
+                referencesList.innerHTML = '<div class="reference-item" style="color: #666;">No relevant documents found</div>';
+                return;
+            }
+
+            referencesList.innerHTML = refs.map(ref => `
+                <div class="reference-item">
+                    <div class="score">Score: ${(ref.score * 100).toFixed(1)}%</div>
+                    <div class="content">${escapeHtml(ref.content)}</div>
+                </div>
+            `).join('');
+        }
+
+        async function sendMessage() {
+            const message = messageInput.value.trim();
+            if (!message || isProcessing) return;
+
+            isProcessing = true;
+            sendBtn.disabled = true;
+            messageInput.value = '';
+
+            // Add user message
+            addMessage(chatMessages, message, 'user');
+
+            // Clear previous reasoning
+            reasoningMessages.innerHTML = '';
+
+            if (streamEnabled) {
+                await sendStreamingMessage(message);
+            } else {
+                await sendNonStreamingMessage(message);
+            }
+
+            isProcessing = false;
+            sendBtn.disabled = false;
+        }
+
+        async function sendStreamingMessage(message) {
+            const responseMsg = addMessage(chatMessages, '', 'assistant');
+            let responseContent = '';
+            let reasoningContent = '';
+            let reasoningMsg = null;
+
+            try {
+                const response = await fetch('/api/chat/stream', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message, include_rag: includeRAG }),
+                });
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    const text = decoder.decode(value);
+                    const lines = text.split('\n');
+
+                    for (const line of lines) {
+                        if (!line.startsWith('data: ')) continue;
+                        const data = JSON.parse(line.slice(6));
+
+                        switch (data.type) {
+                            case 'references':
+                                updateReferences(data.data);
+                                break;
+
+                            case 'reasoning_check':
+                                if (data.needs_reasoning) {
+                                    addReasoningIndicator();
+                                }
+                                break;
+
+                            case 'deep_reasoning_start':
+                                removeReasoningIndicator();
+                                reasoningMsg = addMessage(reasoningMessages, '', 'reasoning');
+                                break;
+
+                            case 'deep_reasoning':
+                                if (!data.done && reasoningMsg) {
+                                    reasoningContent += data.content;
+                                    updateMessage(reasoningMsg, reasoningContent);
+                                }
+                                break;
+
+                            case 'response':
+                                if (!data.done) {
+                                    responseContent += data.content;
+                                    updateMessage(responseMsg, responseContent);
+                                }
+                                break;
+
+                            case 'done':
+                                break;
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error('Stream error:', e);
+                updateMessage(responseMsg, 'Error: ' + e.message);
+            }
+        }
+
+        async function sendNonStreamingMessage(message) {
+            const responseMsg = addMessage(chatMessages, 'Thinking...', 'assistant');
+
+            try {
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message, include_rag: includeRAG }),
+                });
+
+                const data = await response.json();
+
+                if (data.error) {
+                    updateMessage(responseMsg, 'Error: ' + data.error);
+                    return;
+                }
+
+                updateMessage(responseMsg, data.response);
+
+                if (data.deep_reasoning) {
+                    addMessage(reasoningMessages, data.deep_reasoning, 'reasoning');
+                }
+            } catch (e) {
+                updateMessage(responseMsg, 'Error: ' + e.message);
+            }
+        }
+
+        function toggleRAG() {
+            includeRAG = !includeRAG;
+            document.getElementById('rag-toggle').classList.toggle('active', includeRAG);
+        }
+
+        function toggleStream() {
+            streamEnabled = !streamEnabled;
+            document.getElementById('stream-toggle').classList.toggle('active', streamEnabled);
+        }
+
+        async function clearChat() {
+            chatMessages.innerHTML = '';
+            reasoningMessages.innerHTML = '<div class="message assistant"><div class="message-content" style="color: #666; font-style: italic;">Deep reasoning will appear here when complex analysis is needed...</div></div>';
+            referencesList.innerHTML = '<div class="reference-item" style="color: #666; font-style: italic;">Relevant documents will appear here...</div>';
+
+            await fetch('/api/clear', { method: 'POST' });
+        }
+
+        async function runDemo() {
+            try {
+                const response = await fetch('/api/simulate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        sim_type: 'heat_1d',
+                        parameters: { grid_size: 100, steps: 1000 }
+                    }),
+                });
+
+                const data = await response.json();
+
+                if (data.error) {
+                    alert('Simulation error: ' + data.error);
+                    return;
+                }
+
+                // Plot results
+                Plotly.newPlot(graphContainer, [
+                    {
+                        x: data.x,
+                        y: data.initial,
+                        name: 'Initial',
+                        type: 'scatter',
+                        line: { color: '#888', dash: 'dash' }
+                    },
+                    {
+                        x: data.x,
+                        y: data.solution,
+                        name: 'Final',
+                        type: 'scatter',
+                        line: { color: '#00d4ff' }
+                    }
+                ], {
+                    paper_bgcolor: '#0a0a0f',
+                    plot_bgcolor: '#0a0a0f',
+                    font: { color: '#888' },
+                    xaxis: { title: 'Position', gridcolor: '#222' },
+                    yaxis: { title: 'Temperature', gridcolor: '#222' },
+                    margin: { t: 20, r: 20, b: 50, l: 50 },
+                    legend: { x: 0.8, y: 0.95 }
+                }, { responsive: true });
+
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Initialize empty graph
+        Plotly.newPlot(graphContainer, [], {
+            paper_bgcolor: '#0a0a0f',
+            plot_bgcolor: '#0a0a0f',
+            font: { color: '#888' },
+            xaxis: { gridcolor: '#222' },
+            yaxis: { gridcolor: '#222' },
+            margin: { t: 20, r: 20, b: 50, l: 50 },
+            annotations: [{
+                text: 'Run a simulation or ask about aerodynamics',
+                showarrow: false,
+                font: { size: 14, color: '#444' }
+            }]
+        }, { responsive: true });
+    </script>
+</body>
+</html>

@@ -1,11 +1,10 @@
 """
-UI module for Aero Agent.
+Aero UI module.
 
-Provides dashboard and visualization utilities.
+Flask-based web interface for chatting with Aero.
 """
 
-from aero.ui.dashboard_stub import Dashboard
+from aero.ui.flask_app import app, create_app, run_dev_server
 
-__all__ = [
-    "Dashboard",
-]
+__all__ = ["app", "create_app", "run_dev_server"]
+

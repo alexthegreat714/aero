@@ -300,3 +300,23 @@ agents:
     - Aegis      # Security/monitoring agent
     - Apollo     # Knowledge/documentation agent
     - Congress   # Decision-making agent
+
+# LLM Configuration
+llm:
+  # Ollama server settings
+  ollama_url: "http://localhost:11434"
+  timeout: 120.0
+
+  # Model names (as they appear in Ollama)
+  main_model: "gemma3"           # Primary chat model
+  reasoning_model: "deepcoder"   # Deep reasoning model
+
+  # Reasoning settings
+  reasoning_threshold: 2         # Minimum complexity (1-5) to trigger deep reasoning
+  temperature: 0.7               # Default temperature for chat
+  reasoning_temperature: 0.3     # Temperature for reasoning (lower = more focused)
+
+  # Flask UI settings
+  flask_host: "127.0.0.1"
+  flask_port: 5000
+  flask_debug: true
