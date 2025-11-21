@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from aero.config import get_config
+
 logger = logging.getLogger(__name__)
 
 
@@ -426,6 +428,57 @@ def validate_simulation(
             warnings.append(f"Conservation error: {cons_error:.2e}")
             score -= 0.05
 
+    # Symbolic constraint checking
+    constraint_result = None
+    config = get_config()
+    symbolic_config = config.get("symbolic", {})
+
+    if symbolic_config.get("enable", True):
+        try:
+            from aero.symbolic.checks import check_simulation_constraints
+
+            # Build simulation result dict for constraint checker
+            sim_result_for_constraints = {
+                "solution": solution,
+                "sim_type": result.get("type", result.get("sim_type", "unknown")),
+                "metadata": metadata,
+                "converged": converged,
+                "parameters": result.get("parameters", {}),
+            }
+
+            # Get constraint check results
+            constraint_result = check_simulation_constraints(
+                sim_result=sim_result_for_constraints,
+                config=symbolic_config,
+            )
+
+            # Integrate constraint score into validation
+            if constraint_result:
+                constraint_score = constraint_result.get("overall_score", 1.0)
+                constraint_weight = symbolic_config.get("weight_constraints_in_validation", 0.3)
+
+                # Blend scores: (1 - weight) * original + weight * constraint
+                score = (1 - constraint_weight) * score + constraint_weight * constraint_score
+
+                # Add constraint issues/warnings
+                for c in constraint_result.get("constraints", []):
+                    if not c.get("passed", True):
+                        if c.get("required", False):
+                            issues.append(f"Constraint '{c.get('name')}' failed: {c.get('message', '')}")
+                        else:
+                            warnings.append(f"Constraint '{c.get('name')}' not satisfied: {c.get('message', '')}")
+
+                metrics["constraint_score"] = constraint_score
+                metrics["sympy_used"] = constraint_result.get("sympy_used", False)
+
+                logger.debug(f"Constraint check: score={constraint_score:.2f}, sympy={constraint_result.get('sympy_used')}")
+
+        except ImportError:
+            logger.debug("Symbolic module not available for constraint checking")
+        except Exception as e:
+            logger.warning(f"Constraint checking failed: {e}")
+            warnings.append(f"Constraint checking skipped: {e}")
+
     # Ensure score is bounded
     score = max(0.0, min(1.0, score))
 
@@ -443,6 +496,7 @@ def validate_simulation(
             "hypothesis_id": getattr(hypothesis, "id", None),
             "converged": converged,
             "iterations": iterations,
+            "constraint_result": constraint_result,
         },
     )
 
@@ -535,6 +589,44 @@ def validate_experiment(
             warnings.append(f"Moderate OCR confidence: {conf:.2f}")
             score -= 0.05
 
+    # Symbolic constraint checking for experiments
+    constraint_result = None
+    config = get_config()
+    symbolic_config = config.get("symbolic", {})
+
+    if symbolic_config.get("enable", True):
+        try:
+            from aero.symbolic.checks import check_experiment_constraints
+
+            # Get constraint check results
+            constraint_result = check_experiment_constraints(
+                exp_result=data,
+                config=symbolic_config,
+            )
+
+            # Integrate constraint score into validation
+            if constraint_result:
+                constraint_score = constraint_result.get("overall_score", 1.0)
+                constraint_weight = symbolic_config.get("weight_constraints_in_validation", 0.3)
+
+                # Blend scores
+                score = (1 - constraint_weight) * score + constraint_weight * constraint_score
+
+                # Add constraint issues/warnings
+                for c in constraint_result.get("constraints", []):
+                    if not c.get("passed", True):
+                        if c.get("required", False):
+                            issues.append(f"Constraint '{c.get('name')}' failed: {c.get('message', '')}")
+                        else:
+                            warnings.append(f"Constraint '{c.get('name')}' not satisfied: {c.get('message', '')}")
+
+                metrics["constraint_score"] = constraint_score
+
+        except ImportError:
+            logger.debug("Symbolic module not available for constraint checking")
+        except Exception as e:
+            logger.warning(f"Experiment constraint checking failed: {e}")
+
     # Ensure score is bounded
     score = max(0.0, min(1.0, score))
 
@@ -551,6 +643,7 @@ def validate_experiment(
         metadata={
             "hypothesis_id": getattr(hypothesis, "id", None),
             "experiment_type": data.get("type", "unknown"),
+            "constraint_result": constraint_result,
         },
     )
 

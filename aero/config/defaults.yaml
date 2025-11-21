@@ -180,6 +180,8 @@ reasoning:
   max_simulations_per_iteration: 3
   timeout_per_simulation: 60.0
   use_surrogates: true  # Enable surrogate model usage when available
+  use_constraints: true  # Enable symbolic constraint checking
+  penalty_for_constraint_violation: 0.2  # Confidence penalty when constraints fail
 
   # Hypothesis generation
   hypothesis:
@@ -231,6 +233,30 @@ data:
   # Cleanup settings
   max_records_per_type: 1000  # Max records before cleanup warning
   cleanup_after_days: 90     # Auto-cleanup records older than this
+
+# Symbolic / Constraint Validator configuration
+symbolic:
+  enable: true
+  sympy_required: false  # If true, fail if SymPy not available
+
+  # Constraint weights in validation scoring
+  weight_constraints_in_validation: 0.3  # How much constraint results affect overall validation
+
+  # Conservation tolerances
+  mass_conservation_tolerance: 0.05      # 5% tolerance for mass conservation
+  energy_like_tolerance: 0.10            # 10% tolerance for energy-like quantities
+
+  # Boundedness constraints
+  boundedness_check: true
+  min_bound_default: -1.0e10
+  max_bound_default: 1.0e10
+
+  # Monotonicity constraints
+  monotonicity_check: false  # Off by default - only for specific simulations
+
+  # Dimensional analysis
+  dimensional_analysis: true
+  strict_dimensions: false   # If true, dimensional mismatch fails validation
 
 # Surrogate Model configuration
 surrogates:

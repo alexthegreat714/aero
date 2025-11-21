@@ -463,3 +463,226 @@ async def detect_patterns(result_type: str):
         return {"status": "ok", "patterns": patterns_2d}
     else:
         return {"status": "ok", "patterns": patterns_1d + patterns_2d + patterns_general}
+
+
+# =============================================================================
+# Symbolic Constraint Endpoints
+# =============================================================================
+
+
+class ConstraintCheckRequest(BaseModel):
+    """Request for checking constraints on simulation/experiment results."""
+
+    result: Dict[str, Any] = Field(..., description="Simulation or experiment result")
+    result_type: str = Field(default="simulation", description="Type: 'simulation' or 'experiment'")
+    sim_type: Optional[str] = Field(default=None, description="Simulation type (e.g., 'heat_1d')")
+
+
+class DimensionCheckRequest(BaseModel):
+    """Request for dimensional analysis."""
+
+    equation_type: str = Field(..., description="Equation type (e.g., 'heat_1d', 'laplace_2d')")
+    parameters: Dict[str, Any] = Field(..., description="Parameter names and values/dimensions")
+
+
+@router.get("/constraints/status")
+async def constraints_status():
+    """
+    Get status of the symbolic constraint system.
+
+    Returns:
+        sympy_available: Whether SymPy is installed
+        enabled: Whether constraints are enabled in config
+        available_expressions: List of available symbolic expressions
+        available_constraints: List of available constraint types
+    """
+    try:
+        from aero.symbolic.checks import get_symbolic_status
+        status = get_symbolic_status()
+        return {
+            "status": "ok",
+            **status,
+        }
+    except ImportError:
+        return {
+            "status": "ok",
+            "sympy_available": False,
+            "enabled": False,
+            "available_expressions": [],
+            "available_constraints": [],
+            "message": "Symbolic module not available",
+        }
+    except Exception as e:
+        logger.exception(f"Constraint status error: {e}")
+        return {
+            "status": "error",
+            "message": str(e),
+        }
+
+
+@router.post("/constraints/check")
+async def check_constraints(request: ConstraintCheckRequest):
+    """
+    Check constraints on a simulation or experiment result.
+
+    Returns:
+        passed: Overall pass/fail
+        overall_score: Weighted constraint score (0.0 to 1.0)
+        constraints: List of individual constraint results
+        sympy_used: Whether SymPy was used
+    """
+    logger.info(f"Checking constraints for {request.result_type}...")
+
+    try:
+        from aero.symbolic.checks import (
+            check_simulation_constraints,
+            check_experiment_constraints,
+        )
+        from aero.config import get_config
+
+        config = get_config()
+        symbolic_config = config.get("symbolic", {})
+
+        # Build result dict with sim_type if provided
+        result = dict(request.result)
+        if request.sim_type:
+            result["sim_type"] = request.sim_type
+
+        if request.result_type == "simulation":
+            check_result = check_simulation_constraints(
+                sim_result=result,
+                config=symbolic_config,
+            )
+        else:
+            check_result = check_experiment_constraints(
+                exp_result=result,
+                config=symbolic_config,
+            )
+
+        return {
+            "status": "ok",
+            **check_result,
+        }
+
+    except ImportError:
+        return {
+            "status": "ok",
+            "passed": True,
+            "overall_score": 1.0,
+            "constraints": [],
+            "sympy_used": False,
+            "message": "Symbolic module not available - constraints skipped",
+        }
+    except Exception as e:
+        logger.exception(f"Constraint check error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/constraints/dimensions")
+async def check_dimensions(request: DimensionCheckRequest):
+    """
+    Check dimensional consistency for an equation type.
+
+    Returns:
+        consistent: Whether dimensions are consistent
+        details: List of dimension checks performed
+        errors: Any dimensional inconsistencies found
+    """
+    logger.info(f"Checking dimensions for {request.equation_type}...")
+
+    try:
+        from aero.symbolic.dimensions import check_dimensional_consistency
+
+        result = check_dimensional_consistency(
+            equation_type=request.equation_type,
+            parameters=request.parameters,
+        )
+
+        return {
+            "status": "ok",
+            **result,
+        }
+
+    except ImportError:
+        return {
+            "status": "ok",
+            "consistent": True,
+            "details": [],
+            "errors": [],
+            "message": "Symbolic module not available",
+        }
+    except Exception as e:
+        logger.exception(f"Dimension check error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/constraints/expressions")
+async def list_expressions():
+    """
+    List available symbolic expressions for PDEs.
+
+    Returns list of expression names and their metadata.
+    """
+    try:
+        from aero.symbolic.expressions import list_available_expressions
+
+        expressions = list_available_expressions()
+
+        return {
+            "status": "ok",
+            "count": len(expressions),
+            "expressions": {
+                name: expr.to_dict() for name, expr in expressions.items()
+            },
+        }
+
+    except ImportError:
+        return {
+            "status": "ok",
+            "count": 0,
+            "expressions": {},
+            "message": "Symbolic module not available",
+        }
+    except Exception as e:
+        logger.exception(f"List expressions error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/constraints/dimensions/{dimension_name}")
+async def get_dimension(dimension_name: str):
+    """
+    Get information about a physical dimension.
+
+    Args:
+        dimension_name: Name of dimension (e.g., 'velocity', 'pressure')
+
+    Returns:
+        Dimension information including base unit exponents.
+    """
+    try:
+        from aero.symbolic.dimensions import get_dimension, BASE_DIMENSIONS
+
+        dim = get_dimension(dimension_name)
+
+        if dim is None:
+            # Return list of available dimensions
+            return {
+                "status": "error",
+                "message": f"Unknown dimension: {dimension_name}",
+                "available_dimensions": list(BASE_DIMENSIONS.keys()),
+            }
+
+        return {
+            "status": "ok",
+            "dimension": dim.to_dict(),
+            "string": str(dim),
+        }
+
+    except ImportError:
+        return {
+            "status": "error",
+            "message": "Symbolic module not available",
+        }
+    except Exception as e:
+        logger.exception(f"Get dimension error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

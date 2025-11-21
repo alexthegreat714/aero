@@ -27,6 +27,13 @@ try:
 except ImportError:
     DATA_LAKE_AVAILABLE = False
 
+# Symbolic constraint imports (optional)
+try:
+    from aero.symbolic.checks import check_simulation_constraints, get_symbolic_status
+    SYMBOLIC_AVAILABLE = True
+except ImportError:
+    SYMBOLIC_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -432,6 +439,11 @@ class ScientificReasoningLoop:
         self._use_surrogates = app_config.get("reasoning.use_surrogates", True)
         self._init_surrogates()
 
+        # Symbolic constraint support
+        self._use_constraints = app_config.get("reasoning.use_constraints", True)
+        self._constraint_penalty = app_config.get("reasoning.penalty_for_constraint_violation", 0.2)
+        self._symbolic_config = app_config.get("symbolic", {})
+
         logger.info("ScientificReasoningLoop initialized")
 
     def _init_surrogates(self) -> None:
@@ -632,6 +644,34 @@ class ScientificReasoningLoop:
                 iteration_result["validations"].append(validation.to_dict())
 
             logger.info(f"Validated {len(validation_results)} results")
+
+            # Step 4b: Check symbolic constraints and apply penalties
+            constraint_results = []
+            if self._use_constraints and SYMBOLIC_AVAILABLE and self._symbolic_config.get("enable", True):
+                for i, result in enumerate(simulation_results):
+                    try:
+                        constraint_check = check_simulation_constraints(
+                            sim_result=result,
+                            config=self._symbolic_config,
+                        )
+                        constraint_results.append(constraint_check)
+
+                        # Apply penalty to corresponding hypothesis if constraints fail
+                        if not constraint_check.get("passed", True) and i < len(hypotheses):
+                            hypotheses[i].confidence = max(
+                                0.0,
+                                hypotheses[i].confidence - self._constraint_penalty
+                            )
+                            logger.debug(
+                                f"Applied constraint penalty to hypothesis {i}: "
+                                f"new confidence={hypotheses[i].confidence:.2f}"
+                            )
+                    except Exception as e:
+                        logger.warning(f"Constraint check failed for result {i}: {e}")
+                        constraint_results.append({"error": str(e), "passed": True})
+
+                iteration_result["constraint_checks"] = constraint_results
+                logger.info(f"Checked constraints for {len(constraint_results)} simulations")
 
             # Step 5: Detect patterns
             all_patterns = []

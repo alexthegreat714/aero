@@ -498,6 +498,63 @@ def initialize_data_store() -> dict:
     return result
 
 
+def initialize_symbolic() -> dict:
+    """Initialize the symbolic constraint system and return status."""
+    print("\n[Initializing Symbolic Constraints]")
+
+    result = {
+        "sympy_available": False,
+        "enabled": False,
+        "expressions": [],
+        "constraints": [],
+        "status": "not_initialized",
+    }
+
+    try:
+        # Check SymPy
+        try:
+            import sympy
+            result["sympy_available"] = True
+            result["sympy_version"] = sympy.__version__
+        except ImportError:
+            result["sympy_available"] = False
+
+        # Check symbolic module
+        from aero.symbolic.checks import get_symbolic_status
+
+        status = get_symbolic_status()
+        result["enabled"] = status.get("enabled", False)
+        result["expressions"] = status.get("available_expressions", [])
+        result["constraints"] = status.get("available_constraints", [])
+        result["status"] = "ready"
+
+        print(f"  SymPy available:     {'Yes (v' + result.get('sympy_version', '?') + ')' if result['sympy_available'] else 'No'}")
+        print(f"  Constraints enabled: {'Yes' if result['enabled'] else 'No'}")
+
+        if result["expressions"]:
+            print(f"  Available PDEs:      {', '.join(result['expressions'][:5])}")
+            if len(result["expressions"]) > 5:
+                print(f"                       ... and {len(result['expressions']) - 5} more")
+
+        if result["constraints"]:
+            print(f"  Constraint types:    {', '.join(result['constraints'][:5])}")
+            if len(result["constraints"]) > 5:
+                print(f"                       ... and {len(result['constraints']) - 5} more")
+
+        # Print dimensional analysis status
+        from aero.symbolic.dimensions import BASE_DIMENSIONS
+        print(f"  Dimensions defined:  {len(BASE_DIMENSIONS)}")
+
+    except ImportError as e:
+        print(f"  Symbolic module not available: {e}")
+        result["status"] = f"not_available: {e}"
+    except Exception as e:
+        print(f"  Error initializing symbolic: {e}")
+        result["status"] = f"error: {e}"
+
+    return result
+
+
 def initialize_surrogates() -> dict:
     """Initialize the surrogate modeling system and return status."""
     print("\n[Initializing Surrogate Models]")
@@ -637,6 +694,7 @@ def main():
     initialize_experiments()
     initialize_data_store()
     initialize_surrogates()
+    initialize_symbolic()
 
     # Start server
     start_server(args.host, args.port)
